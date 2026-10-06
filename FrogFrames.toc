@@ -1,0 +1,20 @@
+## Interface: 16001, 120000, 120001, 120005, 120007, 120100
+## Title: FrogFrames
+## Category: Frog Wizard
+## Notes: Classic-style unit frames: you, your pet, your target and its target, your focus and your party, each with a round portrait, a name strip and health and power bars, in three looks (Classic, Modern or Forever).
+## Version: 0.1.0
+## SavedVariables: FrogFramesDB
+## IconTexture: Interface\Icons\INV_Misc_GroupNeedMore
+## AddonCompartmentFunc: FrogFrames_OnCompartmentClick
+
+Libs\FrogLib\FrogLib.xml
+Core.lua
+Media.lua
+Grid.lua
+Bars.lua
+Portrait.lua
+Auras.lua
+Unit.lua
+Combo.lua
+Frames.lua
+Config.lua
