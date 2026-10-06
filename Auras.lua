@@ -23,29 +23,7 @@ local SORT = AuraContainerSortMethod and AuraContainerSortMethod.Default
 local SORT_DIR = AuraContainerSortDirection and AuraContainerSortDirection.Normal
 local TIMER_HEIGHT = 12 -- the timer printed under each icon
 
-local formatter
-local function DurationFormatter()
-    if formatter ~= nil then return formatter or nil end
-    formatter = false
-    local R = Enum.NumericRuleFormatRounding
-    if C_StringUtil and C_StringUtil.CreateNumericRuleFormatter and R then
-        local f = C_StringUtil.CreateNumericRuleFormatter()
-        if pcall(f.SetBreakpoints, f, {
-            { threshold = 0, format = "%ds", step = 1, rounding = R.Up },
-            { threshold = 60, format = "%dm", step = 1, rounding = R.Up, components = { { div = 60 } } },
-            { threshold = 61, format = "%dm", step = 1, rounding = R.Down, components = { { div = 60 } } },
-            { threshold = 3600, format = "%dh", step = 1, rounding = R.Down, components = { { div = 3600 } } },
-        }) then
-            formatter = f
-        end
-    end
-    return formatter or nil
-end
-
-local function CallEither(c, newName, oldName, ...)
-    local f = c[newName] or c[oldName]
-    if f then pcall(f, c, ...) end
-end
+local A = FrogLib.Auras -- the rows' building blocks (FrogLib's Auras.lua)
 
 -- Whether a row's timers go under its icons (rather than on them).
 function ns.AuraTimerBelow(cfg)
@@ -101,28 +79,8 @@ function ns.AuraBlockHeight(cfg, all, lines)
     return lines * ns.AuraRowHeight(cfg) + (lines - 1) * ns.AuraSpacing(cfg, all)
 end
 
--- Rounded icons, the shape of FrogUI's action bar buttons (and the cooldown manager's): the
--- icon cut by the rounded mask inside a 2px border, the border rounded the same way round the
--- whole button, and the cooldown sweep following the corners. Square: a 1px border.
-local MASK = "UI-HUD-CoolDownManager-Mask"
-local SWIPE = "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe"
-
-local function Shape(icon, border, button, cooldown, rounded)
-    local inset = rounded and 2 or 1
-    icon:ClearAllPoints()
-    icon:SetPoint("TOPLEFT", button, "TOPLEFT", inset, -inset)
-    icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -inset, inset)
-    if not rounded then return end
-    local inner = button:CreateMaskTexture()
-    inner:SetAtlas(MASK)
-    inner:SetAllPoints(icon)
-    pcall(icon.AddMaskTexture, icon, inner)
-    local outer = button:CreateMaskTexture()
-    outer:SetAtlas(MASK)
-    outer:SetAllPoints(button)
-    pcall(border.AddMaskTexture, border, outer)
-    if cooldown and cooldown.SetSwipeTexture then pcall(cooldown.SetSwipeTexture, cooldown, SWIPE) end
-end
+-- Rounded icons (the action bars' shape) or square ones: FrogLib's Auras.Shape.
+local Shape = A.Shape
 
 local function StyleButton(d)
     local cfg, db = d.cfg, ns.db
@@ -140,41 +98,11 @@ end
 -- styled: the row's list of styled buttons, restyled when the settings change.
 local function MakeInit(styled, cfg, harmful, rounded)
     return function(button)
-        local d = { button = button, cfg = cfg }
-        d.border = button:CreateTexture(nil, "BACKGROUND")
-        d.border:SetAllPoints()
-        if harmful then
-            d.border:SetColorTexture(0.75, 0.12, 0.08, 1)
-        else
-            d.border:SetColorTexture(0, 0, 0, 1)
-        end
-        d.icon = button:CreateTexture(nil, "ARTWORK")
-        d.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        d.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-        Shape(d.icon, d.border, button, d.cooldown, rounded)
-        d.cooldown:SetAllPoints(d.icon)
-        d.cooldown:SetDrawEdge(false)
-        d.cooldown:SetReverse(true)
-        d.cooldown:SetHideCountdownNumbers(true)
-        local carrier = CreateFrame("Frame", nil, button)
-        carrier:SetAllPoints()
-        carrier:SetFrameLevel(d.cooldown:GetFrameLevel() + 1)
-        carrier:EnableMouse(false)
-        d.stack = carrier:CreateFontString(nil, "OVERLAY")
-        d.duration = carrier:CreateFontString(nil, "OVERLAY")
-        for _, fs in ipairs({ d.stack, d.duration }) do
-            fs:SetShadowOffset(1, -1)
-            fs:SetShadowColor(0, 0, 0, 1)
-        end
-        StyleButton(d)
-
-        pcall(button.SetMouseClickEnabled, button, false)
-        button:SetIcon(d.icon)
-        button:SetDurationCooldown(d.cooldown)
-        button:SetApplicationCount(d.stack, {})
-        if not pcall(button.SetDurationText, button, d.duration, { textFormatter = DurationFormatter() }) then
-            pcall(button.SetDurationText, button, d.duration, {})
-        end
+        local d = A.InitButton(button, { border = harmful and { 0.75, 0.12, 0.08 } or nil, rounded = rounded,
+            shadow = true, seconds = true, style = function(new)
+                new.cfg = cfg
+                StyleButton(new)
+            end })
         table.insert(styled, d)
     end
 end
@@ -234,27 +162,16 @@ end
 
 function Auras:Build(row, parent, spec)
     local r, cfg = self.rows[row], spec.cfg
-    if r.container then
-        pcall(r.container.SetUnit, r.container, "none")
-        r.container:Hide()
-        r.container = nil
-    end
-    if not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
-        C_AddOns.LoadAddOn("Blizzard_AuraContainer")
-    end
-    local ok, c = pcall(CreateFrame, "AuraContainer", nil, parent, "CustomAuraContainerTemplate")
-    if not ok then return end
+    A.Release(r.container)
+    r.container = nil
+    local c = A.NewContainer(parent)
+    if not c then return end
 
     -- A row on the left of its frame starts at its right end and grows leftwards; a row above
     -- the frame starts at its bottom and wraps upwards.
     local point = spec.point or "TOPLEFT"
-    local flow = AnchorUtil.FlowDirection
-    local across = (spec.grow == "LEFT" and flow.Left) or flow.Right
-    local down = (spec.up and flow.Up) or flow.Down
-    c:SetSize(1, 1)
     c:SetPoint(point, spec.anchor, "TOPLEFT", spec.x, spec.y)
-    CallEither(c, "SetFlowLayoutAnchorPoint", "SetAuraLayoutAnchorPoint", point)
-    CallEither(c, "SetFlowLayoutGrowthDirection", "SetAuraLayoutGrowthDirection", across, down)
+    A.Flow(c, point, spec.grow == "LEFT" and "LEFT" or "RIGHT", spec.up and "UP" or "DOWN")
 
     wipe(r.styled)
     r.keys = {}
@@ -297,8 +214,7 @@ function Auras:Apply(parent, specs)
                 for _, key in ipairs(r.keys) do pcall(c.SetAuraGroupLayout, c, key, layout) end
                 -- A line holds perRow icons, or all of them: it isn't cut at the bars' width.
                 local per = ns.AuraPerLine(spec.cfg)
-                CallEither(c, "SetFlowLayoutMaximumLineSize", "SetAuraLayoutRowWidth",
-                    per * (spec.cfg.size + sp) - sp + 0.4)
+                A.SetLineSize(c, per * (spec.cfg.size + sp) - sp + 0.4)
                 for _, d in ipairs(r.styled) do
                     d.cfg = spec.cfg
                     pcall(StyleButton, d)

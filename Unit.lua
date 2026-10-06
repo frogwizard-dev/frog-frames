@@ -478,7 +478,7 @@ function Unit:DragStart()
     if ns.db.locked or InCombatLockdown() then return end
     local m = self:Mover()
     m.root:StartMoving()
-    if not m.parent then ns.Grid:Track(m.root) end
+    if not m.parent then FrogLib.Grid:Track(m.root) end
     m.moving = true
 end
 
@@ -489,7 +489,7 @@ function Unit:DragStop()
     local root = m.root
     root:StopMovingOrSizing()
     pcall(root.SetUserPlaced, root, false)
-    ns.Grid:Track(nil)
+    FrogLib.Grid:Track(nil)
     local cfg = m:Cfg()
     if m.parent then
         -- Attached frames keep their place relative to the frame they hang from.
@@ -502,8 +502,8 @@ function Unit:DragStop()
         local px, py = parent:Shift("TOPLEFT")
         cfg.attach = { "TOPLEFT", "TOPLEFT", math.floor(x - sx + px + 0.5), math.floor(y - sy + py + 0.5) }
     else
-        -- Centred exactly when let go near the middle of the screen (Grid.lua).
-        local p, rp, x, y = ns.Grid:Snap(root)
+        -- Centred exactly when let go near the middle of the screen (FrogLib's Grid.lua).
+        local p, rp, x, y = FrogLib.Grid:Snap(root)
         local sx, sy = m:Shift(p)
         cfg.point = { p, "UIParent", rp, x - sx, y - sy }
     end

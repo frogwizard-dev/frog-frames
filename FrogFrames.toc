@@ -10,7 +10,6 @@
 Libs\FrogLib\FrogLib.xml
 Core.lua
 Media.lua
-Grid.lua
 Bars.lua
 Portrait.lua
 Auras.lua

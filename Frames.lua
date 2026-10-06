@@ -64,7 +64,7 @@ end
 function ns.ApplyAll()
     for _, u in ipairs(ns.frameList) do u:Apply() end
     ns.Combo:Apply()
-    ns.Grid:SetShown(not ns.db.locked)
+    FrogLib.Grid:SetShown(not ns.db.locked, "FrogFrames")
     HideBlizzard()
     ns.CheckFrogTarget()
 end

@@ -4,101 +4,11 @@ ns.Config = Config
 
 local W, H = 700, 640
 
--- Same control set as FrogTarget's settings window, each page in a scrolling frame and in
--- sections that open and close.
-
-local function Label(parent, text, template)
-    local fs = parent:CreateFontString(nil, "OVERLAY", template or "GameFontNormal")
-    fs:SetText(text)
-    return fs
-end
-
-local function Help(parent, text)
-    local fs = Label(parent, text, "GameFontDisableSmall")
-    fs:SetWidth(W - 90)
-    fs:SetJustifyH("LEFT")
-    return fs
-end
-
-local function Button(parent, text, w, h)
-    local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    b:SetSize(w, h or 22)
-    b:SetText(text)
-    return b
-end
-
-local function Checkbox(parent, text, get, set)
-    local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-    cb:SetSize(24, 24)
-    Label(cb, text, "GameFontHighlight"):SetPoint("LEFT", cb, "RIGHT", 4, 0)
-    cb:SetChecked(get())
-    cb:SetScript("OnShow", function(self) self:SetChecked(get()) end)
-    cb:SetScript("OnClick", function(self)
-        set(self:GetChecked() and true or false)
-        ns.Refresh()
-    end)
-    return cb
-end
-
-local function Stepper(parent, text, min, max, step, get, set, fmt)
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetSize(380, 24)
-    Label(f, text, "GameFontHighlight"):SetPoint("LEFT", 4, 0)
-    local minus = Button(f, "-", 24)
-    minus:SetPoint("LEFT", 250, 0)
-    local val = Label(f, "", "GameFontHighlight")
-    val:SetWidth(44)
-    val:SetPoint("LEFT", minus, "RIGHT", 4, 0)
-    local plus = Button(f, "+", 24)
-    plus:SetPoint("LEFT", val, "RIGHT", 4, 0)
-    local function refresh() val:SetText(fmt and string.format(fmt, get()) or get()) end
-    local function change(d)
-        if IsShiftKeyDown() then d = d * 10 end -- shift-click: ten steps at once
-        local v = math.max(min, math.min(max, get() + d))
-        set(math.floor(v / step + 0.5) * step)
-        refresh()
-        ns.Refresh()
-    end
-    minus:SetScript("OnClick", function() change(-step) end)
-    plus:SetScript("OnClick", function() change(step) end)
-    f:SetScript("OnShow", refresh)
-    refresh()
-    return f
-end
-
-local function Dropdown(parent, text, groups, get, set)
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetSize(500, 26)
-    Label(f, text, "GameFontHighlight"):SetPoint("LEFT", 4, 0)
-    local dd = CreateFrame("DropdownButton", nil, f, "WowStyle1DropdownTemplate")
-    dd:SetWidth(230)
-    dd:SetPoint("LEFT", 250, 0)
-    dd:SetupMenu(function(_, root)
-        local all, count = groups(), 0
-        for _, group in ipairs(all) do count = count + #group.items end
-        if count > 20 then root:SetScrollMode(20 * 20) end
-        for _, group in ipairs(all) do
-            if group.title then root:CreateTitle(group.title) end
-            for _, item in ipairs(group.items) do
-                root:CreateRadio(item.name, function() return get() == item.path end, function()
-                    set(item.path)
-                    ns.Refresh()
-                end)
-            end
-        end
-    end)
-    return f
-end
-
-local function Options(...)
-    local items = {}
-    for i = 1, select("#", ...), 2 do
-        local path, name = select(i, ...)
-        items[#items + 1] = { path = path, name = name }
-    end
-    local groups = { { items = items } }
-    return function() return groups end
-end
+-- The controls are FrogLib's (UI.lua); every change calls ns.Refresh().
+local UI = FrogLib.UI.Kit({ column = 250, dropWidth = 230, helpWidth = W - 90, refresh = function() ns.Refresh() end })
+local Label, Button, Checkbox, Stepper, Dropdown, Options, ColorSwatch, TextBox, Pair, XY, Help =
+    UI.Label, UI.Button, UI.Checkbox, UI.Stepper, UI.Dropdown, UI.Options, UI.ColorSwatch, UI.TextBox, UI.Pair,
+    UI.XY, UI.Help
 
 local OUTLINES = Options("", "None", "OUTLINE", "Outline", "THICKOUTLINE", "Thick outline")
 local LOOKS = Options("classic", "Classic (glossy, dark bevelled frames)", "modern", "Modern (flat, 1px edge)",
@@ -112,115 +22,6 @@ local SIDES = Options("below", "Below the bars", "above", "Above the bars")
 local PARTY_SIDES = Options("right", "Right of the frame", "left", "Left of the frame", "above", "Above the bars",
     "below", "Below the bars")
 local AURA_MODES = Options("mine", "Only mine", "all", "Mine, then everyone else's")
-
-local function ColorSwatch(parent, text, get, set)
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetSize(320, 24)
-    Label(f, text, "GameFontHighlight"):SetPoint("LEFT", 4, 0)
-    local sw = CreateFrame("Button", nil, f, "BackdropTemplate")
-    sw:SetSize(40, 18)
-    sw:SetPoint("LEFT", 250, 0)
-    sw:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-    sw:SetBackdropBorderColor(1, 1, 1, 0.6)
-    local function refresh()
-        local c = get()
-        sw:SetBackdropColor(c.r, c.g, c.b, 1)
-    end
-    local function apply(r, g, b)
-        set(r, g, b)
-        refresh()
-        ns.Refresh()
-    end
-    sw:SetScript("OnClick", function()
-        local c = get()
-        local r0, g0, b0 = c.r, c.g, c.b
-        ColorPickerFrame:SetFrameStrata("FULLSCREEN_DIALOG")
-        ColorPickerFrame:SetupColorPickerAndShow({
-            r = r0, g = g0, b = b0,
-            swatchFunc = function() apply(ColorPickerFrame:GetColorRGB()) end,
-            cancelFunc = function() apply(r0, g0, b0) end,
-        })
-    end)
-    refresh()
-    return f
-end
-
-local function TextBox(parent, text, get, set)
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetSize(500, 26)
-    Label(f, text, "GameFontHighlight"):SetPoint("LEFT", 4, 0)
-    local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
-    eb:SetSize(220, 20)
-    eb:SetPoint("LEFT", 256, 0)
-    eb:SetAutoFocus(false)
-    eb:SetText(get())
-    eb:SetScript("OnShow", function(self) self:SetText(get()) end)
-    eb:SetScript("OnTextChanged", function(self, userInput)
-        if not userInput then return end
-        set(self:GetText())
-        ns.Refresh()
-    end)
-    eb:SetScript("OnEnterPressed", eb.ClearFocus)
-    eb:SetScript("OnEscapePressed", eb.ClearFocus)
-    return f
-end
-
--- Lays controls out down a frame; the frame grows to fit them.
-local function Placer(page)
-    local y = 0
-    return function(w, h, x)
-        w:SetPoint("TOPLEFT", x or 0, -y)
-        y = y + h
-        page:SetHeight(y + 4)
-    end
-end
-
--- A small stepper for a pair on one row: a short label ("x", "y", "inset"), - value +.
-local function Mini(parent, label, min, max, get, set)
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetSize(130, 24)
-    local l = Label(f, label, "GameFontDisableSmall")
-    l:SetPoint("LEFT", 0, 0)
-    l:SetWidth(34)
-    l:SetJustifyH("RIGHT")
-    local minus = Button(f, "-", 20, 20)
-    minus:SetPoint("LEFT", 38, 0)
-    local val = Label(f, "", "GameFontHighlightSmall")
-    val:SetWidth(36)
-    val:SetPoint("LEFT", minus, "RIGHT", 2, 0)
-    local plus = Button(f, "+", 20, 20)
-    plus:SetPoint("LEFT", val, "RIGHT", 2, 0)
-    local function refresh() val:SetText(get()) end
-    local function change(d)
-        if IsShiftKeyDown() then d = d * 10 end -- shift-click: ten steps at once
-        set(math.max(min, math.min(max, get() + d)))
-        refresh()
-        ns.Refresh()
-    end
-    minus:SetScript("OnClick", function() change(-1) end)
-    plus:SetScript("OnClick", function() change(1) end)
-    f:SetScript("OnShow", refresh)
-    refresh()
-    return f
-end
-
--- One row: a label and two small steppers side by side. a, b: { label, min, max, get, set }.
-local function Pair(parent, text, a, b)
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetSize(500, 24)
-    Label(f, text, "GameFontHighlight"):SetPoint("LEFT", 4, 0)
-    Mini(f, a[1], a[2], a[3], a[4], a[5]):SetPoint("LEFT", 190, 0)
-    if b then Mini(f, b[1], b[2], b[3], b[4], b[5]):SetPoint("LEFT", 330, 0) end
-    return f
-end
-
--- A key's x and y offsets on one row (right and up are +).
-local function XY(parent, text, o, key, range)
-    range = range or 40
-    return Pair(parent, text,
-        { "x", -range, range, function() return o[key .. "X"] end, function(v) o[key .. "X"] = v end },
-        { "y", -range, range, function() return o[key .. "Y"] end, function(v) o[key .. "Y"] = v end })
-end
 
 -- A bar texture setting: "Use General's", "The look's own", then every bar texture FrogLib
 -- knows (FrogUI's Frog bars when it's loaded), with a swatch showing the choice.
@@ -255,61 +56,10 @@ end
 -- Which are open is kept per page in the saved settings (configOpen).
 ------------------------------------------------------------------------------
 
-local PLUS, MINUS = "Interface\\Buttons\\UI-PlusButton-Up", "Interface\\Buttons\\UI-MinusButton-Up"
-
 local function Sections(page, pageKey)
-    local list = {}
     local saved = ns.db.configOpen
     saved[pageKey] = saved[pageKey] or {}
-    local open = saved[pageKey]
-    local function IsOpen(s)
-        local v = open[s.key]
-        if v == nil then return s.default end
-        return v
-    end
-    local function Relayout()
-        local y = 0
-        for _, s in ipairs(list) do
-            s.header:ClearAllPoints()
-            s.header:SetPoint("TOPLEFT", 0, -y)
-            y = y + 26
-            local on = IsOpen(s)
-            s.icon:SetTexture(on and MINUS or PLUS)
-            s.body:SetShown(on)
-            if on then
-                s.body:ClearAllPoints()
-                s.body:SetPoint("TOPLEFT", 0, -y)
-                y = y + s.body:GetHeight() + 8
-            end
-        end
-        page:SetHeight(y + 10)
-    end
-    -- Adds a section; returns its placer. defaultOpen: open until the user closes it.
-    local function Add(key, title, defaultOpen)
-        local s = { key = key, default = defaultOpen and true or false }
-        local header = CreateFrame("Button", nil, page)
-        header:SetSize(W - 70, 24)
-        local bg = header:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints()
-        bg:SetColorTexture(1, 1, 1, 0.06)
-        local hl = header:CreateTexture(nil, "HIGHLIGHT")
-        hl:SetAllPoints()
-        hl:SetColorTexture(1, 0.82, 0, 0.08)
-        s.icon = header:CreateTexture(nil, "ARTWORK")
-        s.icon:SetSize(16, 16)
-        s.icon:SetPoint("LEFT", 4, 0)
-        Label(header, title):SetPoint("LEFT", s.icon, "RIGHT", 6, 0)
-        header:SetScript("OnClick", function()
-            open[s.key] = not IsOpen(s)
-            Relayout()
-        end)
-        s.header = header
-        s.body = CreateFrame("Frame", nil, page)
-        s.body:SetSize(W - 70, 1)
-        list[#list + 1] = s
-        return Placer(s.body), s.body
-    end
-    return Add, Relayout
+    return UI.Sections(page, saved[pageKey], W - 70)
 end
 
 ------------------------------------------------------------------------------
@@ -598,60 +348,15 @@ function Config:BuildExtras(Add, kind, cfg)
     end
 end
 
--- A page in a scroll frame; returns the scrolling content to build on.
-local function Page(f)
-    local sf = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-    sf:SetPoint("TOPLEFT", 16, -64)
-    sf:SetPoint("BOTTOMRIGHT", -34, 12)
-    local child = CreateFrame("Frame", nil, sf)
-    child:SetSize(W - 60, 10)
-    sf:SetScrollChild(child)
-    return sf, child
-end
-
-local TABS = {
-    { "general", "General" }, { "player", "Player" }, { "pet", "Pet" }, { "target", "Target" },
-    { "tot", "ToT" }, { "focus", "Focus" }, { "party", "Party" }, { "partypet", "Party pets" },
-}
-
+-- Each page scrolls; the tabs share the width out.
 function Config:Build()
-    local f = CreateFrame("Frame", "FrogFramesConfig", UIParent, "BasicFrameTemplateWithInset")
-    f:SetSize(W, H)
-    f:SetPoint("CENTER")
-    f:SetFrameStrata("DIALOG")
-    f:SetClampedToScreen(true)
-    f:SetMovable(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
-    Label(f, "FrogFrames"):SetPoint("TOP", 0, -5)
-    tinsert(UISpecialFrames, "FrogFramesConfig")
-    self.frame = f
-
-    local frames, pages, tabs = {}, {}, {}
-    local function select(key)
-        for k, sf in pairs(frames) do sf:SetShown(k == key) end
-        for k, tab in pairs(tabs) do
-            if k == key then tab:LockHighlight() else tab:UnlockHighlight() end
-        end
+    local pages = { { "general", "General", function(p) self:BuildGeneral(p) end } }
+    for _, def in ipairs({ { "player", "Player" }, { "pet", "Pet" }, { "target", "Target" }, { "tot", "ToT" },
+        { "focus", "Focus" }, { "party", "Party" }, { "partypet", "Party pets" } }) do
+        local kind = def[1]
+        pages[#pages + 1] = { kind, def[2], function(p) self:BuildUnit(p, kind) end }
     end
-    local tabW = math.floor((W - 28) / #TABS)
-    for i, def in ipairs(TABS) do
-        local key = def[1]
-        local tab = Button(f, def[2], tabW - 2)
-        tab:SetPoint("TOPLEFT", 14 + (i - 1) * tabW, -30)
-        tab:SetScript("OnClick", function() select(key) end)
-        local fs = tab:GetFontString()
-        if fs then fs:SetWordWrap(false) end
-        tabs[key] = tab
-        frames[key], pages[key] = Page(f)
-    end
-    self:BuildGeneral(pages.general)
-    for _, kind in ipairs({ "player", "pet", "target", "tot", "focus", "party", "partypet" }) do
-        self:BuildUnit(pages[kind], kind)
-    end
-    select("general")
+    self.frame = UI.Window("FrogFramesConfig", "FrogFrames", W, H, pages, { fitTabs = true, scroll = true })
 end
 
 function Config:Toggle()

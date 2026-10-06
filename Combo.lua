@@ -15,9 +15,7 @@ ns.Combo = Combo
 -- from max - 1 to max, fills only when you have them all.
 ------------------------------------------------------------------------------
 
-local issecret, Safe = ns.issecret, ns.Safe
-local POINTS = (Enum.PowerType and Enum.PowerType.ComboPoints) or 4
-local MAX_PIPS = 10
+local C = FrogLib.Combo -- who has them, how many, the count (FrogLib's Combo.lua)
 
 local holder
 local pips = {}
@@ -25,10 +23,7 @@ local count = 0
 
 -- Whether this character has combo points at all (the row's room under the bars is kept for
 -- them even out of cat form, so nothing below jumps with every shift).
-local function HasPoints()
-    local _, class = UnitClass("player")
-    return class == "ROGUE" or class == "DRUID"
-end
+local HasPoints = C.Has
 
 -- Whether the row goes on this kind of frame ("player" or "target").
 function Combo:On(kind)
@@ -38,23 +33,15 @@ end
 
 -- Rogues always; druids in cat form (the form with energy), or anyone with points while unlocked.
 local function Wanted()
-    local _, class = UnitClass("player")
-    if class == "ROGUE" or not ns.db.locked then return true end
-    local _, token = UnitPowerType("player")
-    return Safe(token) == "ENERGY"
+    return not ns.db.locked or C.Active()
 end
 
-local function MaxPoints()
-    local max = UnitPowerMax("player", POINTS)
-    if issecret(max) or not max or max <= 0 then return 5 end
-    return math.min(max, MAX_PIPS)
-end
+local MaxPoints = C.Max
 
 -- Your points on your target, as the target frame counts them. May be secret: widgets only.
 local function Points()
     if not ns.db.locked then return 3 end -- a sample, while unlocked
-    if GetComboPoints then return GetComboPoints("player", "target") end
-    return UnitPower("player", POINTS)
+    return C.Points()
 end
 
 local function MakePip(i)
@@ -141,19 +128,6 @@ end
 
 function Combo:Init()
     if not HasPoints() then return end
-    local ev = CreateFrame("Frame")
-    ev:RegisterEvent("PLAYER_TARGET_CHANGED")
-    ev:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-    ev:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
-    ev:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
-    ev:RegisterUnitEvent("UNIT_MAXPOWER", "player")
-    ev:RegisterUnitEvent("UNIT_DISPLAYPOWER", "player")
-    ev:SetScript("OnEvent", function(_, event)
-        if event == "PLAYER_TARGET_CHANGED" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_POWER_UPDATE" then
-            Combo:Update()
-        else
-            -- A form or the max changed: whether it shows, and how many pips.
-            Combo:Apply()
-        end
-    end)
+    -- A form or the max changed: whether it shows, and how many pips.
+    C.Watch(function() Combo:Update() end, function() Combo:Apply() end)
 end

@@ -172,28 +172,13 @@ ns.defaults = {
 ns.issecret = FrogLib.issecret
 ns.Safe = FrogLib.Safe
 
-function ns.Print(...)
-    print("|cff66dd66FrogFrames|r:", ...)
-end
+ns.Print = FrogLib.Util.Printer("FrogFrames", "66dd66")
 
-local function CopyDefaults(src, dst)
-    for k, v in pairs(src) do
-        if type(v) == "table" then
-            if type(dst[k]) ~= "table" then dst[k] = {} end
-            CopyDefaults(v, dst[k])
-        elseif dst[k] == nil then
-            dst[k] = v
-        end
-    end
-end
+local CopyDefaults = FrogLib.Util.CopyDefaults
 ns.CopyDefaults = CopyDefaults
 
 -- A fresh copy of a default (for "reset position").
-function ns.CopyOf(t)
-    local c = {}
-    for k, v in pairs(t) do c[k] = type(v) == "table" and ns.CopyOf(v) or v end
-    return c
-end
+ns.CopyOf = FrogLib.Util.Copy
 
 ------------------------------------------------------------------------------
 -- Text templates
@@ -253,16 +238,7 @@ function ns.CheckFrogTarget()
 end
 
 -- Settings saved by an earlier build, brought up to date, a step for each version.
-local function Copy(src, dst)
-    for k, v in pairs(src) do
-        if type(v) == "table" then
-            if type(dst[k]) ~= "table" then dst[k] = {} end
-            Copy(v, dst[k])
-        else
-            dst[k] = v
-        end
-    end
-end
+local Copy = FrogLib.Util.Merge -- src's values over dst's
 
 function ns.Migrate(db)
     local v = db.version
