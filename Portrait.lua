@@ -113,10 +113,22 @@ function ns.CreatePortrait(parent, level)
     return p
 end
 
+-- The portrait's look: the stone frames wear the classic ring.
+function ns.PortraitLook()
+    local look = ns.db.look
+    return look == "stone" and "classic" or look
+end
+
+-- This portrait's look: "vanilla" in a vanilla frame (its art has the ring), else the frames'.
+function Portrait:Look()
+    return self.vanilla and "vanilla" or ns.PortraitLook()
+end
+
 -- How thick the ring is, in units: the picture shows inside it.
 function Portrait:Ring()
-    local look, size = ns.db.look, self.size or 0
+    local look, size = self:Look(), self.size or 0
     local px = FrogLib.Pixel(self.frame)
+    if look == "vanilla" then return 0 end
     if look == "classic" then return size / 2 * (1 - HOLE) end
     if look == "forever" then return 3 * (ns.db.frameThickness or 1) * px end
     return 2 * px
@@ -124,7 +136,7 @@ end
 
 -- dx, dy: the level badge's offset (the frame's settings).
 function Portrait:Layout(size, side, dx, dy)
-    local f, look = self.frame, ns.db.look
+    local f, look = self.frame, self:Look()
     self.size, self.side = size, side
     f:SetSize(size, size)
     local px = FrogLib.Pixel(f)
@@ -181,8 +193,8 @@ function Portrait:Layout(size, side, dx, dy)
     self.badge:SetPoint("CENTER", f, "CENTER", out * size * BADGE_X + (dx or 0), size * BADGE_Y + (dy or 0))
     self.badgeArt:SetTexture(BADGE)
     self.badgeArt:SetShown(look == "classic")
-    self.badgeOuter:SetShown(look ~= "classic")
-    self.badgeInner:SetShown(look ~= "classic")
+    self.badgeOuter:SetShown(look ~= "classic" and look ~= "vanilla")
+    self.badgeInner:SetShown(look ~= "classic" and look ~= "vanilla")
     if look == "forever" then
         self.badgeOuter:SetVertexColor(0.62, 0.62, 0.66, 1)
     else

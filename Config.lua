@@ -10,9 +10,9 @@ local Label, Button, Checkbox, Stepper, Dropdown, Options, ColorSwatch, TextBox,
     UI.Label, UI.Button, UI.Checkbox, UI.Stepper, UI.Dropdown, UI.Options, UI.ColorSwatch, UI.TextBox, UI.Pair,
     UI.XY, UI.Help
 
-local OUTLINES = Options("", "None", "OUTLINE", "Outline", "THICKOUTLINE", "Thick outline")
+local OUTLINES = Options("", "None", "SHADOW", "Drop shadow", "OUTLINE", "Outline", "THICKOUTLINE", "Thick outline")
 local LOOKS = Options("classic", "Classic (glossy, dark bevelled frames)", "modern", "Modern (flat, 1px edge)",
-    "forever", "Forever (cooldown manager bars)")
+    "forever", "Forever (cooldown manager bars)", "stone", "Stone (Classic action bar's carved frame)")
 local PORTRAITS = Options("2d", "Picture", "3d", "3D model (square, inside the ring)", "class", "Class icon (players)",
     "none", "None")
 local HEALTH_COLORS = Options("class", "Class colour / reaction", "green", "Always green (Classic)")
@@ -99,8 +99,11 @@ function Config:BuildGeneral(p)
     for _, def in ipairs({
         { "raid", "Raid target marks" },
         { "leader", "Group leader / assistant" },
+        { "role", "Group role: tank, healer, damage (your frame and the party's)" },
+        { "roleDamage", "...damage too (off: only tanks and healers)" },
         { "status", "Resting and in combat (your frame)" },
         { "pvp", "PvP flag (players)" },
+        { "happiness", "A hunter's pet's happiness (its frame)" },
     }) do
         local key = def[1]
         place(Checkbox(b, def[2], function() return db.icons[key] end, function(v) db.icons[key] = v end), 26)
@@ -128,18 +131,44 @@ end
 
 local PARENTS = { pet = "From your frame", tot = "From the target frame", partypet = "From the party member" }
 
--- Every kind of frame's page, in sections: Frame, Size, Look, Position & offsets, Text, then its
--- cast bar, buffs & debuffs and extras where it has them.
+-- Every kind of frame's page, in sections: Frame, Place, Vanilla frame, Fading, Size, Look, Fine
+-- nudges, Text, then its cast bar, buffs & debuffs and extras where it has them.
 function Config:BuildUnit(p, kind)
     local cfg = ns.db.units[kind]
     local o = cfg.offsets
     local c, a = cfg.cast, cfg.auras
     local Add, Relayout = Sections(p, kind)
 
-    -- Frame: on or off, where, what it shows.
+    -- Frame: on or off, and what it shows.
     local place, b = Add("frame", "Frame", true)
     place(Checkbox(b, "Show this frame (hides Blizzard's while it's on)",
-        function() return cfg.enabled end, function(v) cfg.enabled = v end), 28)
+        function() return cfg.enabled end, function(v) cfg.enabled = v end), 30)
+    place(Dropdown(b, "Portrait", PORTRAITS, function() return cfg.portrait end, function(v) cfg.portrait = v end), 30)
+    place(Dropdown(b, "Name", NAME_POS, function() return cfg.namePos end, function(v) cfg.namePos = v end), 30)
+    place(Checkbox(b, "Long names run on over the portrait (name above the bars)",
+        function() return cfg.nameFull end, function(v) cfg.nameFull = v end), 26, 20)
+    place(Checkbox(b, "Show the level (in a badge on the portrait)", function() return cfg.showLevel end,
+        function(v) cfg.showLevel = v end), 26)
+
+    -- Place: where it is, typed (any fraction): from its anchor on the screen, or from the frame it
+    -- hangs from.
+    place, b = Add("place", "Place", true)
+    local at = cfg.attach or cfg.point
+    local first = cfg.attach and 3 or 4
+    if cfg.attach then place(Label(b, PARENTS[kind], "GameFontHighlightSmall"), 20, 4) end
+    for i, axis in ipairs({ "Position across (right +)", "Position up (+)" }) do
+        place(TextBox(b, axis, function() return tostring(at[first + i - 1] or 0) end, function(v)
+            local n = tonumber(v)
+            if n then
+                at[first + i - 1] = n
+                ns.Refresh()
+            end
+        end), 28)
+    end
+    if cfg.spacing then
+        place(Stepper(b, "Gap between frames", 0, 80, 1, function() return cfg.spacing end,
+            function(v) cfg.spacing = v end), 28)
+    end
     local reset = Button(b, "Reset position", 130)
     reset:SetScript("OnClick", function()
         local d = ns.defaults.units[kind]
@@ -148,18 +177,39 @@ function Config:BuildUnit(p, kind)
         ns.Refresh()
     end)
     place(reset, 30, 6)
-    place(Dropdown(b, "Portrait", PORTRAITS, function() return cfg.portrait end, function(v) cfg.portrait = v end), 30)
-    place(Dropdown(b, "Name", NAME_POS, function() return cfg.namePos end, function(v) cfg.namePos = v end), 30)
-    place(Checkbox(b, "Long names run on over the portrait (name above the bars)",
-        function() return cfg.nameFull end, function(v) cfg.nameFull = v end), 28)
-    place(Checkbox(b, "Show the level (in a badge on the portrait)", function() return cfg.showLevel end,
-        function(v) cfg.showLevel = v end), 26)
+
+    -- The vanilla frame: Blizzard's 1.x art.
+    if kind ~= "partypet" then
+        local big = kind == "player" or kind == "target" or kind == "focus"
+        place, b = Add("vanilla", "Vanilla frame", cfg.vanilla and true or false)
+        place(Checkbox(b, "Vanilla frame: Blizzard's own 1.x art (its own sizes; Scale still applies)",
+            function() return cfg.vanilla end, function(v) cfg.vanilla = v end), 26)
+        if big then
+            place(Checkbox(b, "Large health bar (over the name box; the name above)",
+                function() return cfg.vanillaThick end, function(v) cfg.vanillaThick = v end), 26, 20)
+        end
+        place(Checkbox(b, "This frame's own bar textures (off: Classic's)",
+            function() return cfg.vanillaTextures end, function(v) cfg.vanillaTextures = v end), 28, 20)
+        -- The level's nudge in the vanilla frame, typed (any fraction: 1.25, -0.5).
+        if big then
+            for _, axis in ipairs({ { "X", "Level nudge across (right +)" }, { "Y", "Level nudge up (+)" } }) do
+                local key = "vanillaLevel" .. axis[1]
+                place(TextBox(b, axis[2], function() return tostring(cfg[key] or 0) end, function(v)
+                    local n = tonumber(v)
+                    if n then cfg[key] = n end
+                end), 28, 20)
+            end
+        end
+    end
+
+    -- Fading.
+    place, b = Add("fading", "Fading", false)
     place(Checkbox(b, "Fade while out of range", function() return cfg.fadeRange end,
         function(v) cfg.fadeRange = v end), 26)
     local fade = cfg.fade
     place(Checkbox(b, "Fade when idle: out of combat, health full, power at rest",
         function() return fade.enabled end, function(v) fade.enabled = v end), 26)
-    place(Checkbox(b, "... and only with nothing targeted", function() return fade.noTarget end,
+    place(Checkbox(b, "Only with nothing targeted", function() return fade.noTarget end,
         function(v) fade.noTarget = v end), 26, 20)
     place(Stepper(b, "Faded opacity", 0, 1, 0.05, function() return fade.alpha end,
         function(v) fade.alpha = v end, "%.2f"), 28, 20)
@@ -196,24 +246,19 @@ function Config:BuildUnit(p, kind)
         function(v) cfg.healthTexture = v end, { 0.25, 0.8, 0.25 }), 30)
     place(TextureChoice(b, "Power bar texture", function() return cfg.powerTexture end,
         function(v) cfg.powerTexture = v end, { 0.2, 0.35, 1 }), 30)
+    if cfg.healPredict ~= nil then
+        place(Checkbox(b, "Incoming heals (yours brighter) and shields on the health bar",
+            function() return cfg.healPredict end, function(v) cfg.healPredict = v end), 26)
+    end
 
-    -- Position & offsets: one row each, x and y (right and up are +).
-    place, b = Add("offsets", "Position & offsets", false)
-    if cfg.attach then
-        local at = cfg.attach
-        place(Pair(b, PARENTS[kind],
-            { "x", -300, 300, function() return at[3] end, function(v) at[3] = v end },
-            { "y", -300, 300, function() return at[4] end, function(v) at[4] = v end }), 26)
-    end
-    if cfg.spacing then
-        place(Pair(b, "Gap between frames", { "y", 0, 80, function() return cfg.spacing end,
-            function(v) cfg.spacing = v end }), 26)
-    end
+    -- Fine nudges: each part, x and y (right and up are +).
+    place, b = Add("offsets", "Fine nudges", false)
     place(XY(b, "Portrait", o, "portrait"), 26)
     place(XY(b, "Bars", o, "bars"), 26)
     place(XY(b, "Name", o, "name"), 26)
     place(XY(b, "Level badge", o, "level"), 26)
     if cfg.restPos then place(XY(b, "Resting zzz", o, "rest"), 26) end
+    if kind == "pet" then place(XY(b, "Happiness face", o, "happiness"), 26) end
     for _, bar in ipairs({ { "health", "Health" }, { "power", "Power" } }) do
         place(XY(b, bar[2] .. " text, left", o, bar[1] .. "Left", 60), 26)
         place(XY(b, bar[2] .. " text, middle", o, bar[1], 60), 26)
@@ -240,9 +285,17 @@ function Config:BuildUnit(p, kind)
         local key = def[1]
         place(TextBox(b, def[2], function() return cfg.text[key] end, function(v) cfg.text[key] = v end), 28)
     end
+    -- Your frame's druid mana bar.
+    if cfg.druidMana ~= nil then
+        for _, def in ipairs({ { "druidLeft", "Druid mana, left" }, { "druid", "Druid mana, middle" },
+            { "druidRight", "Druid mana, right" } }) do
+            local key = def[1]
+            place(TextBox(b, def[2], function() return cfg.text[key] end, function(v) cfg.text[key] = v end), 28)
+        end
+    end
     place(Help(b, "Words: |cffffd100value|r, |cffffd100max|r, |cffffd100percent|r (|cffffd100percent.1|r for a "
         .. "decimal), |cffffd100name|r, |cffffd100level|r, |cffffd100class|r. On the power bar, value, max and percent are the "
-        .. "power's. Leave empty to hide."), 40, 4)
+        .. "power's; on the druid mana bar, your mana's. Leave empty to hide."), 40, 4)
 
     if c then
         place, b = Add("cast", "Cast bar", false)
@@ -311,15 +364,22 @@ local REST_POS = Options("portrait", "Top of the portrait", "badge", "Beside the
 -- What only some frames have: your druid mana, glows and resting icon; the dragon; the party's.
 function Config:BuildExtras(Add, kind, cfg)
     if kind == "player" then
-        local place, b = Add("extras", "Your frame", false)
-        place(Dropdown(b, "Resting \"zzz\"", REST_POS, function() return cfg.restPos end,
-            function(v) cfg.restPos = v end), 30)
-        place(Checkbox(b, "Druids: your mana by the bars while in a form",
+        local place, b = Add("druid", "Druid mana (in a form)", false)
+        place(Checkbox(b, "Your mana by the bars while in a form",
             function() return cfg.druidMana end, function(v) cfg.druidMana = v end), 26)
         place(Dropdown(b, "Where", SIDES, function() return cfg.druidManaSide end,
             function(v) cfg.druidManaSide = v end), 30, 20)
         place(Stepper(b, "Mana bar height", 2, 20, 1, function() return cfg.druidManaHeight end,
             function(v) cfg.druidManaHeight = v end), 26, 20)
+        place(Stepper(b, "Mana text size (0 = fit the bar)", 0, 20, 1, function() return cfg.druidTextSize end,
+            function(v) cfg.druidTextSize = v end), 26, 20)
+        place(Help(b, "Its text and nudge are under Text and Fine nudges."), 18, 4)
+
+        place, b = Add("extras", "Your frame", false)
+        place(Checkbox(b, "Five-second rule: a strip on your mana bar until regen starts again",
+            function() return cfg.manaRule end, function(v) cfg.manaRule = v end), 26)
+        place(Dropdown(b, "Resting \"zzz\"", REST_POS, function() return cfg.restPos end,
+            function(v) cfg.restPos = v end), 30)
         place(Checkbox(b, "A soft glow while resting (gold) or fighting (red)",
             function() return cfg.glow end, function(v) cfg.glow = v end), 26)
         place(Checkbox(b, "A soft glow, yellow to red, while you have aggro",

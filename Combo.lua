@@ -58,8 +58,60 @@ local function MakePip(i)
     return pip
 end
 
--- How tall the pips are (inside their frames), in the owner frame's units.
+------------------------------------------------------------------------------
+-- On a vanilla frame (Unit.lua): 1.x's own combo points instead, round its portrait. Each a
+-- socket (Interface\ComboFrame\ComboPoint, its first 0.375 drawn 12 x 16) with the lit
+-- point in it (the next 0.1875, 8 x 16, 2 in), lit through FrogLib.Combo.Lit (the count may be
+-- secret). Where 1.x put them (ComboFrame.xml): each point's top right from its combo frame,
+-- which sits 44 in from the frame's right end and 9 down.
+------------------------------------------------------------------------------
+
+local ORB = "Interface\\ComboFrame\\ComboPoint"
+local ORBS = { { -39, 7 }, { -26.5, 8 }, { -14, 7 }, { -2.5, 1.5 }, { 6.5, -7 } }
+local ORB_FRAME_X, ORB_FRAME_Y = 232 - 44, -9
+local orbs = {}
+
+local function Vanilla(owner)
+    return owner and owner.vanillaArt and owner.vanillaArt:IsShown() or false
+end
+
+local function MakeOrb(i, owner)
+    local o = CreateFrame("Frame", nil, owner.content)
+    o:SetSize(12, 12)
+    o.socket = o:CreateTexture(nil, "BACKGROUND")
+    o.socket:SetTexture(ORB)
+    o.socket:SetTexCoord(0, 0.375, 0, 1)
+    o.socket:SetSize(12, 16)
+    o.socket:SetPoint("TOPLEFT")
+    o.lit = o:CreateTexture(nil, "ARTWORK")
+    o.lit:SetTexture(ORB)
+    o.lit:SetTexCoord(0.375, 0.5625, 0, 1)
+    o.lit:SetSize(8, 16)
+    o.lit:SetPoint("TOPLEFT", 2, 0)
+    orbs[i] = o
+    return o
+end
+
+local function HideOrbs()
+    for _, o in pairs(orbs) do o:Hide() end
+end
+
+local function LayoutOrbs(owner)
+    for i = 1, #ORBS do
+        local o = orbs[i] or MakeOrb(i, owner)
+        o:SetParent(owner.content)
+        o:SetFrameLevel(owner.vanillaArt:GetFrameLevel() + 1)
+        local right, top = ORB_FRAME_X + ORBS[i][1], ORB_FRAME_Y + ORBS[i][2]
+        o:ClearAllPoints()
+        o:SetPoint("CENTER", owner.root, "TOPLEFT", owner:VX(right - 6), top - 6)
+        o:SetShown(i <= count and Wanted())
+    end
+end
+
+-- How tall the pips are (inside their frames), in the owner frame's units; none on a vanilla
+-- frame (its points go round the portrait).
 function Combo:PipHeight(owner)
+    if Vanilla(owner) then return 0 end
     return ns.Snap(ns.db.combo.height, owner.geo.px)
 end
 
@@ -68,8 +120,16 @@ function Combo:Layout()
     local owner = ns.frames and ns.frames[cfg.on]
     if not (holder and count > 0 and owner and owner.geo and owner.comboY and self:On(cfg.on)) then
         if holder then holder:Hide() end
+        HideOrbs()
         return
     end
+    if Vanilla(owner) then
+        holder:Hide()
+        LayoutOrbs(owner)
+        self:Update()
+        return
+    end
+    HideOrbs()
     local g = owner.geo
     holder:SetParent(owner.content)
     holder:SetFrameLevel(owner.stack:GetFrameLevel() + 1)
@@ -106,6 +166,13 @@ end
 
 -- Lights the pips: the count straight into each one's status bar.
 function Combo:Update()
+    if orbs[1] and orbs[1]:IsShown() then
+        local points = Points()
+        for i = 1, math.min(count, #ORBS) do
+            local o = orbs[i]
+            if not pcall(o.lit.SetAlpha, o.lit, C.Lit(points, i, count)) then o.lit:SetAlpha(0) end
+        end
+    end
     if not (holder and holder:IsShown()) then return end
     local points = Points()
     for i = 1, count do

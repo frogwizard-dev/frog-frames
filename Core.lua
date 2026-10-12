@@ -44,6 +44,11 @@ end
 local function UnitDefaults(t)
     local d = {
         enabled = true,
+        -- Blizzard's own 1.x frame art (Unit.lua's vanilla frame; not the party's pets): with a
+        -- large health bar over the name box (the big frame), and the frame's own bar textures
+        -- rather than Classic's.
+        vanilla = false, vanillaThick = false, vanillaTextures = false,
+        vanillaLevelX = 0, vanillaLevelY = 0, -- the vanilla frame's level, nudged (any fraction)
         scale = 1,
         width = 112,            -- the bars' width (the portrait is beside them)
         healthHeight = 24,
@@ -58,7 +63,8 @@ local function UnitDefaults(t)
         showLevel = true,       -- in a badge on the portrait's edge (above the bars without one)
         nameSize = 10,
         textSize = 10,
-        text = { healthLeft = "", health = "value / max", healthRight = "", powerLeft = "", power = "percent", powerRight = "" },
+        text = { healthLeft = "", health = "value / max", healthRight = "", powerLeft = "", power = "percent", powerRight = "",
+            druidLeft = "", druid = "", druidRight = "" }, -- druid: your druid mana bar's (the player frame)
         hitText = false,        -- damage and heals floating over the portrait (Blizzard's combat feedback)
         fadeRange = false,      -- fade while out of range
         -- Nudges, in interface units (right and up are positive): the portrait and the bars, each
@@ -72,6 +78,7 @@ local function UnitDefaults(t)
             powerLeftX = 4, powerLeftY = 0, powerX = 0, powerY = 0, powerRightX = -4, powerRightY = 0,
             nameX = 0, nameY = 0, levelX = 0, levelY = 0, restX = 0, restY = 0,
             castX = 0, castY = 0, debuffsX = 0, debuffsY = 0, buffsX = 0, buffsY = 0, druidX = 0, druidY = 0,
+            happinessX = 0, happinessY = 0, -- the pet's happiness face
         },
         -- The bars' textures: "general" (the General page's), "" (the look's own) or a file.
         healthTexture = "general",
@@ -87,7 +94,7 @@ end
 ns.defaults = {
     locked = true,
     configOpen = {}, -- which sections of each settings page are open (Config.lua)
-    -- The look: "classic", "modern" or "forever". texture "" uses the look's own bar texture.
+    -- The look: "classic", "modern", "forever" or "stone". texture "" uses the look's own bar texture.
     look = "classic",
     texture = "",
     frameThickness = 1, -- the classic and forever frames: screen pixels per pixel of their art (1 to 3)
@@ -100,7 +107,8 @@ ns.defaults = {
     nameColor = "gold",
     levelColor = true, -- the level coloured by difficulty, a skull when it's too high to show
     rangeAlpha = 0.45, -- how faded a frame is while its unit is out of range
-    icons = { raid = true, leader = true, status = true, pvp = false, size = 16 },
+    icons = { raid = true, leader = true, status = true, pvp = false, happiness = true, size = 16,
+        role = true, roleDamage = true }, -- role: the group role (or main tank / assist) on your frame and the party's
     -- Combo points: a row of pips by the player's or the target's bars (on: "player"/"target"),
     -- below or above them (side).
     combo = { enabled = true, on = "target", side = "below", height = 6, spacing = 1, x = 0, y = 0,
@@ -110,6 +118,11 @@ ns.defaults = {
             point = { "TOPLEFT", "UIParent", "TOPLEFT", 24, -28 },
             druidMana = true,   -- your mana by the bars while a druid form shows rage or energy
             druidManaHeight = 6,
+            druidTextSize = 0,  -- its text's size (0: the bar text's, no taller than the bar)
+            manaRule = true,    -- the five-second rule: a strip along whichever bar shows your mana
+            healPredict = true, -- incoming heals (yours, others') and shields on the health bar
+            -- Your own cast bar (off to start; Blizzard's stays): in a vanilla frame, 1.x's player cast bar.
+            cast = (function() local c = CastDefaults(13); c.enabled = false; c.side = "below"; return c end)(),
             druidManaSide = "below",
             glow = false,       -- a soft light round the frame while resting (gold) or fighting (red)
             -- Resting "zzz": "portrait" (its top outer corner), "badge" (beside the level badge)
@@ -122,6 +135,8 @@ ns.defaults = {
             attach = { "TOPLEFT", "BOTTOMLEFT", 40, -12 }, -- from the player frame
             width = 64, healthHeight = 10, powerHeight = 5, portraitSize = 30,
             showLevel = false, nameSize = 9, textSize = 8, text = NoText(),
+            fade = { enabled = true, alpha = 0, noTarget = true }, -- with your own frame
+            healPredict = true,
         }),
         target = UnitDefaults({
             point = { "TOPLEFT", "UIParent", "TOPLEFT", 290, -28 },
@@ -149,6 +164,7 @@ ns.defaults = {
             text = { healthLeft = "", health = "percent", healthRight = "", powerLeft = "", power = "", powerRight = "" },
             fadeRange = true,
             spacing = 26,       -- between one party frame and the next
+            healPredict = true, -- incoming heals and shields on the health bar
             hideInRaid = true,  -- Blizzard's party frames go in a raid too
             threat = true,
             -- A short row of debuffs by each frame: side "right", "left", "above" or "below".
@@ -165,6 +181,7 @@ ns.defaults = {
             width = 60, healthHeight = 9, powerHeight = 0, portrait = "none", portraitSize = 20,
             namePos = "inside", showLevel = false, nameSize = 8, textSize = 8, text = NoText(),
             fadeRange = true,
+            healPredict = true,
         }),
     },
 }
@@ -344,6 +361,11 @@ function ns.Migrate(db)
             end
         end
     end
+    if v < 8 then
+        -- The pet's frame fades when idle too, like your own (it was left out).
+        local fade = type(units.pet) == "table" and units.pet.fade
+        if type(fade) == "table" then fade.enabled = true end
+    end
 end
 
 local f = CreateFrame("Frame")
@@ -359,7 +381,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         local db = FrogFramesDB
         ns.Migrate(db)
         CopyDefaults(ns.defaults, db)
-        db.version = 7
+        db.version = 8
         ns.db = db
     elseif event == "PLAYER_LOGIN" or (event == "PLAYER_REGEN_ENABLED" and not ns.ready and ns.db) then
         -- The frames are secure: made out of combat (a reload mid-fight waits for its end).
@@ -395,6 +417,12 @@ SlashCmdList.FROGFRAMES = function(msg)
         ns.db.locked = msg == "lock" or (msg == "move" and not ns.db.locked)
         ns.Refresh()
         ns.Print(ns.db.locked and "frames locked." or "frames unlocked: drag them to move (samples show where there's no unit).")
+        return
+    end
+    if msg == "idle" then
+        for _, u in ipairs(ns.frameList or {}) do
+            if u.root:IsShown() then u:IdleReport() end
+        end
         return
     end
     ns.Config:Toggle()

@@ -25,6 +25,7 @@ local MANA = (Enum.PowerType and Enum.PowerType.Mana) or 0
 local Cast, Color, Icons, Secure = FrogLib.Cast, FrogLib.Color, FrogLib.Icons, FrogLib.Secure
 
 local SLOTS = { "Left", "", "Right" } -- the text slots on a bar: healthLeft, health, healthRight
+local DRUID_SAMPLE = { value = 70, max = 100, percent = 70 } -- the druid mana bar's text while unlocked, out of form
 local CAST_COLOR = { 1, 0.72, 0.3 }
 local CAST_LOCKED = { 0.6, 0.6, 0.6 }
 
@@ -215,6 +216,10 @@ function Unit:Build()
         pvp = icons:CreateTexture(nil, "OVERLAY"),
     }
     if self.kind == "player" then self.rest = self:BuildRest(icons) end
+    -- The group role (tank, healer, damage): your frame and the party's.
+    if self.kind == "player" or self.kind == "party" then self.icons.role = icons:CreateTexture(nil, "OVERLAY") end
+    -- A hunter's pet's happiness: the game's own faces.
+    if self.kind == "pet" then self.icons.happiness = icons:CreateTexture(nil, "OVERLAY") end
     self.iconLayer = icons
 
     -- Marks the frame while unlocked: a tint and its name.
@@ -228,6 +233,8 @@ function Unit:Build()
 
     local cfg = self:Cfg()
     if cfg.druidMana ~= nil then self:BuildDruidMana() end
+    if cfg.manaRule ~= nil then self:BuildRule() end
+    if cfg.healPredict ~= nil then self:BuildPredict() end
     if cfg.cast ~= nil then self:BuildCast() end
     if cfg.auras ~= nil then
         self.auras = ns.NewAuras(self.unit, function() return self:Cfg().auras end)
@@ -297,7 +304,156 @@ function Unit:BuildDruidMana()
     self.druid.bar:SetAllPoints()
     self.druid:SetColor(Color.Power(nil, "MANA"))
     self.druidHolder = holder
+    -- Its text, as the other bars' (druidLeft, druid, druidRight), over its frame.
+    local words = CreateFrame("Frame", nil, holder)
+    words:SetAllPoints()
+    words:SetFrameLevel(holder:GetFrameLevel() + 8)
+    self.texts.druid = {}
+    for _, slot in ipairs(SLOTS) do
+        local justify = slot == "Left" and "LEFT" or slot == "Right" and "RIGHT" or "CENTER"
+        self.texts.druid[slot] = Text(words, justify)
+    end
     holder:Hide()
+end
+
+-- The five-second rule on whichever bar shows your mana (the power bar, or the druid mana bar in a
+-- form): spending mana stops your regen for five seconds, and a thin strip just under that bar (as
+-- XIVPlayer's) fills across them, a spark at its tip, gone when regen starts again. It's drawn
+-- over everything but the words, the vanilla frame's art included. FrogLib.FSR says when
+-- it starts: from the cast spell's mana cost (spell data, not your mana, which may be secret), or
+-- for a spell the game keeps secret, from the drop in your mana that comes with it.
+local RULE = FrogLib.FSR.RULE
+local SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
+
+function Unit:BuildRule()
+    local f = CreateFrame("Frame", nil, self.content)
+    -- Above the bars' frames and the vanilla art (stack + 12), under the words (stack + 16).
+    f:SetFrameLevel(self.stack:GetFrameLevel() + 13)
+    f.track = f:CreateTexture(nil, "BACKGROUND")
+    f.track:SetAllPoints()
+    f.track:SetColorTexture(0, 0, 0, 0.6)
+    f.fill = f:CreateTexture(nil, "OVERLAY")
+    f.fill:SetPoint("TOPLEFT")
+    f.fill:SetPoint("BOTTOMLEFT")
+    f.spark = f:CreateTexture(nil, "OVERLAY", nil, 1)
+    f.spark:SetTexture(SPARK)
+    f.spark:SetBlendMode("ADD")
+    local r, g, b = Color.Power(nil, "MANA")
+    r, g, b = r + (1 - r) * 0.55, g + (1 - g) * 0.55, b + (1 - b) * 0.55
+    f.fill:SetColorTexture(r, g, b, 0.95)
+    f.spark:SetVertexColor(r, g, b)
+    f:SetScript("OnUpdate", function() self:UpdateRule() end)
+    f:Hide()
+    self.rule = f
+    self.fsr = FrogLib.FSR.NewWatcher(function() self:UpdateRule() end)
+    self.fsr:Listen()
+end
+
+function Unit:UpdateRule()
+    local f = self.rule
+    if not f then return end
+    local cfg, bar = self:Cfg(), nil
+    if cfg.manaRule and self.shownUnit ~= false then
+        if (cfg.powerHeight > 0 or self:Vanilla()) and Safe(UnitPowerType("player")) == MANA then
+            bar = self.power.bar
+        elseif self.druidShown then
+            bar = self.druid.bar
+        end
+    end
+    local left = self.fsr:Left()
+    -- Unlocked: a sample, to see where it sits.
+    if not left and not ns.db.locked then left = RULE * 0.4 end
+    if not (bar and left) then
+        f:Hide()
+        return
+    end
+    if f.bar ~= bar then
+        -- Just under the bar: on the vanilla art's rim, or over the bottom line of the bar's frame.
+        f.bar = bar
+        local px = FrogLib.Pixel(bar)
+        f:ClearAllPoints()
+        f:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -px)
+        f:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -px)
+        f:SetHeight(px * 2)
+        f.spark:SetSize(px * 8, px * 10)
+    end
+    local x = (1 - left / RULE) * f:GetWidth()
+    f.fill:SetWidth(math.max(0.01, x))
+    f.spark:ClearAllPoints()
+    f.spark:SetPoint("CENTER", f, "LEFT", x, 0)
+    f:Show()
+end
+
+-- Heal prediction on the health bar: your incoming heals (bright green), everyone else's (darker
+-- green) and damage shields (white), each a bar of its own, one after the other from the end of the
+-- health bar's fill. The amounts can be secret, so they're never added up here: each bar is as wide
+-- as the health bar, set from 0 to the unit's maximum health and given its amount (status bars
+-- take secret values), and starts where the one before it ends (the fill texture's right edge).
+-- The game's own heal prediction calculator splits yours from others' and caps them at the
+-- health that's missing; anything past the bar's end is cut off.
+local PREDICT_COLORS = { mine = { 0.35, 1, 0.45, 0.65 }, others = { 0.1, 0.7, 0.3, 0.55 }, shield = { 1, 1, 1, 0.5 } }
+local PREDICT_SAMPLE = { mine = 12, others = 8, shield = 6 } -- of 100, while unlocked
+
+function Unit:BuildPredict()
+    local hb = self.health.bar
+    local clip = CreateFrame("Frame", nil, hb)
+    clip:SetAllPoints()
+    clip:SetClipsChildren(true)
+    local function Bar(key, after)
+        local s = CreateFrame("StatusBar", nil, clip)
+        s:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+        local c = PREDICT_COLORS[key]
+        s:SetStatusBarColor(c[1], c[2], c[3], c[4])
+        s:SetMinMaxValues(0, 1)
+        s:SetValue(0)
+        s:SetPoint("TOPLEFT", after, "TOPRIGHT")
+        s:SetPoint("BOTTOMLEFT", after, "BOTTOMRIGHT")
+        return s
+    end
+    local p = { clip = clip }
+    p.mine = Bar("mine", hb:GetStatusBarTexture())
+    p.others = Bar("others", p.mine:GetStatusBarTexture())
+    p.shield = Bar("shield", p.others:GetStatusBarTexture())
+    if CreateUnitHealPredictionCalculator then p.calc = CreateUnitHealPredictionCalculator() end
+    self.predict = p
+    local function Size()
+        local w = hb:GetWidth()
+        for _, key in ipairs({ "mine", "others", "shield" }) do p[key]:SetWidth(math.max(1, w)) end
+    end
+    hb:HookScript("OnSizeChanged", Size)
+    Size()
+end
+
+function Unit:UpdatePredict()
+    local p = self.predict
+    if not p then return end
+    local unit = self.shownUnit
+    if not self:Cfg().healPredict or unit == false then
+        p.clip:Hide()
+        return
+    end
+    p.clip:Show()
+    local mine, others, shield, max
+    if unit then
+        max = UnitHealthMax(unit)
+        if p.calc and UnitGetDetailedHealPrediction then
+            pcall(UnitGetDetailedHealPrediction, unit, "player", p.calc)
+            local _, fromMe, fromOthers = p.calc:GetIncomingHeals()
+            mine, others = fromMe, fromOthers
+            shield = p.calc:GetDamageAbsorbs()
+        else
+            -- No calculator: all incoming heals in one bar (they can't be split without sums).
+            mine = UnitGetIncomingHeals and UnitGetIncomingHeals(unit) or 0
+            others = 0
+            shield = UnitGetTotalAbsorbs and UnitGetTotalAbsorbs(unit) or 0
+        end
+    else
+        max, mine, others, shield = 100, PREDICT_SAMPLE.mine, PREDICT_SAMPLE.others, PREDICT_SAMPLE.shield
+    end
+    for key, v in pairs({ mine = mine or 0, others = others or 0, shield = shield or 0 }) do
+        p[key]:SetMinMaxValues(0, max or 1)
+        p[key]:SetValue(v)
+    end
 end
 
 -- The cast bar by the frame: FrogTarget's, with the spell's icon in a frame of its own at its
@@ -379,19 +535,23 @@ function Unit:BuildCast()
 end
 
 local HEALTH_EVENTS = { UNIT_HEALTH = true, UNIT_MAXHEALTH = true }
+local PREDICT_EVENTS = { UNIT_HEAL_PREDICTION = true, UNIT_ABSORB_AMOUNT_CHANGED = true }
 local POWER_EVENTS = { UNIT_POWER_UPDATE = true, UNIT_POWER_FREQUENT = true, UNIT_MAXPOWER = true, UNIT_DISPLAYPOWER = true }
 local UNIT_EVENTS = { "UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_FACTION", "UNIT_FLAGS", "UNIT_CONNECTION",
     "UNIT_CLASSIFICATION_CHANGED", "UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_COMBAT",
-    "UNIT_THREAT_SITUATION_UPDATE", "UNIT_AURA" }
+    "UNIT_THREAT_SITUATION_UPDATE", "UNIT_AURA", "UNIT_HAPPINESS" }
 -- Anything that can change who a unit is, or the icons on every frame.
 local WORLD_EVENTS = { "PLAYER_ENTERING_WORLD", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED", "RAID_TARGET_UPDATE",
     "UNIT_PET", "PLAYER_UPDATE_RESTING", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED", "UPDATE_SHAPESHIFT_FORM",
-    "PLAYER_FLAGS_CHANGED" }
+    "PLAYER_FLAGS_CHANGED", "PLAYER_ROLES_ASSIGNED" }
 
 function Unit:RegisterEvents()
     local f, unit = self.content, self.unit
     local function try(fn, ...) pcall(fn, f, ...) end
     for e in pairs(HEALTH_EVENTS) do try(f.RegisterUnitEvent, e, unit) end
+    if self.predict then
+        for e in pairs(PREDICT_EVENTS) do try(f.RegisterUnitEvent, e, unit) end
+    end
     -- Your power events come for every kind of power: the druid mana bar follows them too.
     for e in pairs(POWER_EVENTS) do try(f.RegisterUnitEvent, e, unit) end
     for _, e in ipairs(UNIT_EVENTS) do try(f.RegisterUnitEvent, e, unit) end
@@ -409,6 +569,8 @@ function Unit:OnEvent(event, arg1, ...)
     if HEALTH_EVENTS[event] then
         self:UpdateHealth(false)
         self:Changed("health")
+    elseif PREDICT_EVENTS[event] then
+        self:UpdatePredict()
     elseif POWER_EVENTS[event] then
         self:UpdatePower(false)
         self:Changed("power")
@@ -418,6 +580,8 @@ function Unit:OnEvent(event, arg1, ...)
         self:UpdateCast(event)
     elseif event == "UNIT_AURA" then
         self:CheckEmpty()
+    elseif event == "UNIT_HAPPINESS" then
+        self:UpdateIcons()
     elseif event == "UNIT_COMBAT" then
         if self:Cfg().hitText and self.portraitShown then self.portrait:CombatEvent(...) end
     elseif event == "UNIT_THREAT_SITUATION_UPDATE" or event == "PLAYER_UPDATE_RESTING"
@@ -441,7 +605,8 @@ function Unit:OnEvent(event, arg1, ...)
         end
     elseif event == "UPDATE_SHAPESHIFT_FORM" then
         if self.druid then self:UpdatePower(false) end
-    elseif event == "RAID_TARGET_UPDATE" or event == "PARTY_LEADER_CHANGED" or event == "PLAYER_FLAGS_CHANGED" then
+    elseif event == "RAID_TARGET_UPDATE" or event == "PARTY_LEADER_CHANGED" or event == "PLAYER_FLAGS_CHANGED"
+        or event == "PLAYER_ROLES_ASSIGNED" then
         self:UpdateIcons()
     elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" or event == self.event then
         self:Update(true)
@@ -596,10 +761,326 @@ end
 
 local function Round(v, px) return math.floor(v / px + 0.5) * px end
 
+------------------------------------------------------------------------------
+-- The vanilla frame (cfg.vanilla): Blizzard's own 1.x unit frame art, with our bars, portrait, name
+-- and level in its holes as 1.x laid them out (VANILLA_SPECS, from each art's own holes, in its
+-- texels drawn 1:1). Your frame, the target and the focus wear the big target frame (the target's
+-- way round, mirrored for yours), its name box tinted by reaction on the target and focus and the
+-- elite, rare or rare elite art round special targets; your pet the small one, the target's target
+-- its own, the party theirs (portrait on the left, mirrored if the frame's the other way round).
+-- Options: a large health bar over the name box (vanillaThick, the big frame: our own cut of the
+-- art without the divider, Media\VanillaThick*.tga; the name above the frame), and the frame's own
+-- bar textures instead of Classic's (vanillaTextures). Sized by the frame's own Scale; clicks,
+-- text, auras and the rest work as on any frame. Your druid mana bar gets the art's bar slot.
+------------------------------------------------------------------------------
+
+local ART = "Interface\\TargetingFrame\\"
+local VANILLA_BAR = ART .. "UI-StatusBar"
+local VANILLA_NAME_BACK = ART .. "UI-TargetingFrame-LevelBackground"
+local THICK = "Interface\\AddOns\\FrogFrames\\Media\\VanillaThick"
+local SPECIAL = { elite = "-Elite", worldboss = "-Elite", rare = "-Rare", rareelite = "-Rare-Elite" }
+-- Each art: its file, drawn w x h from its coords; the side its portrait is on; and in its
+-- texels: health and power { x, y, w, h }, the portrait { centre x, centre y, across }, the level's
+-- centre (none: no level), and the name (box: its box { x, y, w, h }, centred; else its anchor
+-- point and { x, y }, left-justified).
+-- The level's ring: an ellipse fitted to its gold rim (x 189.5-213.5, rows 56.5-76.5 of the
+-- art, Forever's redraw, a little wider than tall) is centred at (201.9, 66.05), (178, 66) on the
+-- frame; the digits half a texel lower, as they draw a little high.
+local BIG = {
+    file = ART .. "UI-TargetingFrame", w = 232, h = 100, coords = { 0.09375, 1, 0, 0.78125 }, portraitSide = "right",
+    health = { 7, 41, 119, 12 }, power = { 7, 52, 119, 12 }, portrait = { 158, 44, 64 }, level = { 178, 66.5 },
+    box = { 7, 22, 119, 19 }, special = true,
+    -- The large health bar: over the name box too, the name above the frame.
+    thickHealth = { 7, 22, 119, 31 }, thickName = { "BOTTOM", 66.5, -19 },
+}
+local VANILLA_SPECS = {
+    player = BIG, target = BIG, focus = BIG,
+    pet = { file = ART .. "UI-SmallTargetingFrame", w = 128, h = 48, coords = { 0, 1, 0, 0.75 }, portraitSide = "left",
+        health = { 47, 22, 69, 8 }, power = { 47, 29, 69, 8 }, portrait = { 25.5, 24.5, 37 },
+        name = { "BOTTOMLEFT", 51, -19 } },
+    tot = { file = ART .. "UI-TargetofTargetFrame", w = 93, h = 45, coords = { 0.015625, 0.7265625, 0, 0.703125 },
+        portraitSide = "left", health = { 45, 15, 46, 7 }, power = { 45, 23, 46, 7 }, portrait = { 22.5, 22.5, 35 },
+        name = { "TOPLEFT", 45, -31 } },
+    party = { file = ART .. "UI-PartyFrame", w = 128, h = 48, coords = { 0, 1, 0, 0.75 }, portraitSide = "left",
+        health = { 47, 12, 70, 7 }, power = { 47, 20, 70, 7 }, portrait = { 25.5, 24.5, 37 },
+        name = { "BOTTOMLEFT", 49, -8 } },
+}
+-- Your druid mana bar in the big art's bar slot: its left end (x 26-34, rows 50-66, the bar 5 in
+-- from its left and 2 down), mirrored at the right, the middle stretched.
+local DRUID_SLOT = { l = 26, r = 34, t = 50, b = 66, inX = 5, inY = 2, bar = 12 }
+
+function Unit:Vanilla()
+    return VANILLA_SPECS[self.kind] ~= nil and self:Cfg().vanilla and true or false
+end
+
+-- x across the art, for this frame's side: the art mirrored when the frame's portrait is on the
+-- other side from the art's.
+function Unit:VX(x, w)
+    local spec = VANILLA_SPECS[self.kind]
+    local portraitSide = self.side == "left" and "left" or "right"
+    if portraitSide ~= spec.portraitSide then return spec.w - x - (w or 0) end
+    return x
+end
+
+function Unit:VMirrored()
+    local spec = VANILLA_SPECS[self.kind]
+    return (self.side == "left" and "left" or "right") ~= spec.portraitSide
+end
+
+function Unit:BuildVanilla()
+    local art = CreateFrame("Frame", nil, self.content)
+    art:SetAllPoints(self.root)
+    -- Over the bars and the portrait's picture, under the words.
+    art:SetFrameLevel(self.stack:GetFrameLevel() + 12)
+    art.tex = art:CreateTexture(nil, "ARTWORK")
+    art.tex:SetAllPoints()
+    self.vanillaArt = art
+    -- The name's box, under the bars.
+    self.vanillaNameBack = self.content:CreateTexture(nil, "BACKGROUND")
+    self.vanillaNameBack:SetTexture(VANILLA_NAME_BACK)
+end
+
+-- The art for this unit: the big frame's elite, rare or rare elite version for special targets
+-- (the classification may be secret: read safely), its large-health cut if set; mirrored or not.
+function Unit:VanillaArt(classification)
+    if not self.vanillaArt then return end
+    local spec = VANILLA_SPECS[self.kind]
+    local suffix = (spec.special and self.kind ~= "player") and SPECIAL[Safe(classification) or ""] or ""
+    if spec.thickHealth and self:Cfg().vanillaThick then
+        self.vanillaArt.tex:SetTexture(THICK .. suffix:gsub("-", ""))
+    else
+        self.vanillaArt.tex:SetTexture(spec.file .. suffix)
+    end
+    local c = spec.coords
+    if self:VMirrored() then
+        self.vanillaArt.tex:SetTexCoord(c[2], c[1], c[3], c[4])
+    else
+        self.vanillaArt.tex:SetTexCoord(c[1], c[2], c[3], c[4])
+    end
+end
+
+-- The name box tinted by the unit's reaction, as 1.x did (the big frame, not on yours).
+function Unit:VanillaNameColour(unit)
+    local back = self.vanillaNameBack
+    if not back then return end
+    local spec = VANILLA_SPECS[self.kind]
+    local on = spec.box and self.kind ~= "player" and not self:Cfg().vanillaThick
+    back:SetShown(on and true or false)
+    if not on then return end
+    if unit and pcall(function() back:SetVertexColor(UnitSelectionColor(unit)) end) then return end
+    back:SetVertexColor(1, 0, 0)
+end
+
+-- Your druid mana bar in the art's bar slot (its ends cut from the big art), Classic's texture.
+function Unit:VanillaDruid(on)
+    if not self.druid then return end
+    local holder = self.druidHolder
+    local caps = self.druidCaps
+    if on and not caps then
+        caps = {}
+        local frame = CreateFrame("Frame", nil, holder)
+        frame:SetAllPoints()
+        frame:SetFrameLevel(holder:GetFrameLevel() + 6)
+        for i = 1, 3 do
+            caps[i] = frame:CreateTexture(nil, "ARTWORK")
+            caps[i]:SetTexture(BIG.file)
+        end
+        caps.frame = frame
+        self.druidCaps = caps
+    end
+    if caps then caps.frame:SetShown(on and true or false) end
+    if self.druidBox then self.druidBox:SetShown(not on) end
+    if not on then return end
+    local d = DRUID_SLOT
+    local k = (holder:GetHeight() or d.bar) / d.bar
+    if not (k > 0) then k = 1 end
+    local capW, capH = (d.r - d.l) * k, (d.b - d.t) * k
+    local u0, u1, v0, v1 = d.l / 256, d.r / 256, d.t / 128, d.b / 128
+    local left, mid, right = caps[1], caps[2], caps[3]
+    left:ClearAllPoints()
+    left:SetPoint("TOPLEFT", holder, "TOPLEFT", -d.inX * k, d.inY * k)
+    left:SetSize(capW, capH)
+    left:SetTexCoord(u0, u1, v0, v1)
+    right:ClearAllPoints()
+    right:SetPoint("TOPRIGHT", holder, "TOPRIGHT", d.inX * k, d.inY * k)
+    right:SetSize(capW, capH)
+    right:SetTexCoord(u1, u0, v0, v1)
+    -- The middle: a slice just past the left end, stretched between them.
+    mid:ClearAllPoints()
+    mid:SetPoint("TOPLEFT", left, "TOPRIGHT")
+    mid:SetPoint("BOTTOMRIGHT", right, "BOTTOMLEFT")
+    mid:SetTexCoord(u1, (d.r + 60) / 256, v0, v1)
+    self.druid:ApplyTexture(self:Cfg().vanillaTextures and self:Cfg().powerTexture or VANILLA_BAR)
+    self.druid.track:SetColorTexture(0, 0, 0, 0.5)
+end
+
+-- The cast bar in the vanilla frame: your own frame's in 1.x's player cast bar frame
+-- (UI-CastingBar-Border, 256 x 64, its top 28 above a 195 x 13 bar, centred on it, as 1.x drew it;
+-- its left end at x 23), the others in Classic's small cast bar frame (its opening x 36-221, rows
+-- 27-37; its left end at x 28); each stretched to the bar, Classic's texture, the spell's icon just
+-- clear of the frame's left end. Our own frames round the bar and icon out of sight.
+local CAST_FRAMES = {
+    big = { file = "Interface\\CastingBar\\UI-CastingBar-Border", x = -30.5, y = 28, barW = 195, barH = 13, edge = 23 },
+    small = { file = "Interface\\CastingBar\\UI-CastingBar-Border-Small", x = -36, y = 27, barW = 185, barH = 10, edge = 28 },
+}
+
+function Unit:VanillaCast(on)
+    local c = self.cast
+    if not c then return end
+    if on and not c.vanillaFrame then
+        local f = CreateFrame("Frame", nil, c.holder)
+        f:SetAllPoints()
+        f:SetFrameLevel(c.holder:GetFrameLevel() + 6)
+        c.vanillaBorder = f:CreateTexture(nil, "ARTWORK")
+        c.vanillaFrame = f
+    end
+    if c.vanillaFrame then c.vanillaFrame:SetShown(on) end
+    c.box:SetShown(not on)
+    c.iconBox:SetShown(not on)
+    if not on then return end
+    local cf = self.kind == "player" and CAST_FRAMES.big or CAST_FRAMES.small
+    local kx, ky = (c.holder:GetWidth() or cf.barW) / cf.barW, (c.holder:GetHeight() or cf.barH) / cf.barH
+    c.vanillaBorder:SetTexture(cf.file)
+    c.vanillaBorder:ClearAllPoints()
+    c.vanillaBorder:SetPoint("TOPLEFT", c.holder, "TOPLEFT", cf.x * kx, cf.y * ky)
+    c.vanillaBorder:SetSize(256 * kx, 64 * ky)
+    c.gauge:ApplyTexture(self:Cfg().vanillaTextures and nil or VANILLA_BAR)
+    c.gauge.track:SetColorTexture(0, 0, 0, 0.5)
+    c.iconFrame:ClearAllPoints()
+    c.iconFrame:SetPoint("RIGHT", c.holder, "LEFT", (cf.x + cf.edge) * kx - 3, 0)
+end
+
+function Unit:LayoutVanilla()
+    local cfg, db = self:Cfg(), ns.db
+    local o = cfg.offsets
+    local root = self.root
+    local px = FrogLib.Pixel(root)
+    local spec = VANILLA_SPECS[self.kind]
+    if not self.vanillaArt then self:BuildVanilla() end
+    self.vanillaArt:Show()
+    local VW, VH = spec.w, spec.h
+    if not InCombatLockdown() then root:SetSize(VW, VH) end
+    self.box = { home = { 0, 0, VW, VH }, used = { 0, 0, VW, VH } }
+    local thick = spec.thickHealth and cfg.vanillaThick
+
+    -- The bars in the art's slots (the large health bar over the name box too).
+    local hs, ps = thick and spec.thickHealth or spec.health, spec.power
+    local W = hs[3]
+    local bx = self:VX(hs[1], W)
+    local stack = self.stack
+    stack:ClearAllPoints()
+    stack:SetPoint("TOPLEFT", root, "TOPLEFT", bx, -hs[2])
+    stack:SetSize(W, ps[2] + ps[4] - hs[2])
+    local hb, pb = self.health.bar, self.power.bar
+    hb:ClearAllPoints()
+    hb:SetPoint("TOPLEFT", stack, "TOPLEFT", 0, 0)
+    hb:SetSize(W, hs[4])
+    pb:ClearAllPoints()
+    pb:SetPoint("TOPLEFT", stack, "TOPLEFT", 0, -(ps[2] - hs[2]))
+    pb:SetSize(ps[3], ps[4])
+    pb:SetShown(true)
+    self.health:ApplyTexture(cfg.vanillaTextures and cfg.healthTexture or VANILLA_BAR)
+    self.power:ApplyTexture(cfg.vanillaTextures and cfg.powerTexture or VANILLA_BAR)
+    for _, bar in ipairs({ self.health, self.power }) do bar.track:SetColorTexture(0, 0, 0, 0.5) end
+    self.healthBox:SetShown(false)
+    self.powerBox:SetShown(false)
+
+    -- The portrait's picture in the ring; the level in the small ring (the big frame).
+    local p = self.portrait
+    p.vanilla = true
+    local D = spec.portrait[3]
+    self.portraitShown = cfg.portrait ~= "none"
+    p.frame:SetShown(self.portraitShown)
+    p:Layout(D, self.side, 0, 0)
+    p.badge:SetShown(false)
+    p.frame:ClearAllPoints()
+    p.frame:SetPoint("CENTER", root, "TOPLEFT", self:VX(spec.portrait[1]), -spec.portrait[2])
+    local lt = self.levelText
+    lt:ClearAllPoints()
+    if spec.level then
+        ns.Media:SetFont(lt, db.font, 10, db.outline)
+        -- Nudged by its own offsets (vanillaLevelX / Y, any fraction; right and up are +).
+        lt:SetPoint("CENTER", root, "TOPLEFT", self:VX(spec.level[1]) + (cfg.vanillaLevelX or 0),
+            -spec.level[2] + (cfg.vanillaLevelY or 0))
+        lt:SetTextColor(1, 0.82, 0)
+    end
+    lt:SetShown(spec.level ~= nil and cfg.showLevel)
+    self.levelAbove = spec.level ~= nil and cfg.showLevel
+
+    -- The name: centred in its box (or above the frame with the large health bar), or by the bars.
+    local nt = self.nameText
+    ns.Media:SetFont(nt, db.font, cfg.nameSize, db.outline)
+    nt:ClearAllPoints()
+    nt:SetWordWrap(false)
+    nt:SetTextColor(1, 0.82, 0)
+    local nb = self.vanillaNameBack
+    if spec.box and not thick then
+        local b = spec.box
+        nb:ClearAllPoints()
+        nb:SetPoint("TOPLEFT", root, "TOPLEFT", self:VX(b[1], b[3]), -b[2])
+        nb:SetSize(b[3], b[4])
+        nt:SetPoint("CENTER", root, "TOPLEFT", self:VX(b[1], b[3]) + b[3] / 2 + o.nameX, -(b[2] + b[4] / 2) + o.nameY)
+        nt:SetWidth(b[3] - 7)
+        nt:SetJustifyH("CENTER")
+    elseif thick then
+        local n = spec.thickName
+        nt:SetPoint(n[1], root, "TOPLEFT", self:VX(n[2]) + o.nameX, n[3] + o.nameY)
+        nt:SetWidth(0)
+        nt:SetJustifyH("CENTER")
+    else
+        local n = spec.name
+        local point = n[1]
+        if self:VMirrored() then point = point:gsub("LEFT", "RIGHT") end
+        nt:SetPoint(point, root, "TOPLEFT", self:VX(n[2]) + o.nameX, n[3] + o.nameY)
+        nt:SetWidth(0)
+        nt:SetJustifyH(point:find("RIGHT") and "RIGHT" or "LEFT")
+    end
+    self.nameShown = cfg.namePos ~= "none"
+    nt:SetShown(self.nameShown)
+    self.nameSlot = nil
+
+    -- The bars' text slots, as on any frame, no taller than their bar.
+    for bar, b in pairs({ health = hb, power = pb }) do
+        local h = bar == "health" and hs[4] or ps[4]
+        for _, slot in ipairs(SLOTS) do
+            local fs = self.texts[bar][slot]
+            ns.Media:SetFont(fs, db.font, math.max(6, math.min(cfg.textSize, h)), db.outline)
+            fs:ClearAllPoints()
+            local dx, dy = o[bar .. slot .. "X"] or 0, o[bar .. slot .. "Y"] or 0
+            local at = slot == "Left" and "LEFT" or slot == "Right" and "RIGHT" or "CENTER"
+            fs:SetPoint(at, b, at, dx + (at == "LEFT" and 2 or at == "RIGHT" and -2 or 0), dy)
+        end
+    end
+
+    -- What hangs off the frame goes clear of the art: above the name, below its frame.
+    local reach = 3
+    local above = thick and (hs[2] - 2) or (spec.box and (hs[2] - spec.box[2] - reach) or (cfg.nameSize + 2))
+    self.geo = { W = W, stackH = ps[2] + ps[4] - hs[2], reach = reach, px = px, P = D, ring = 0,
+        nameH = math.max(0, above), clear = 0, pcy = spec.portrait[2] - hs[2], left = bx, right = VW - bx - W }
+    self.glow:Place(stack, reach)
+    local unit = self.unit and UnitExists(self.unit) and self.unit or nil
+    self:VanillaArt(unit and UnitClassification(unit) or nil)
+    self:VanillaNameColour(unit)
+    self:LayoutIcons()
+    self:LayoutAround()
+    self:VanillaDruid(self.druidHolder ~= nil)
+end
+
 -- Sizes and places everything inside the frame, and the frame to fit (the frame only when it's
 -- allowed: out of combat). Everything on whole screen pixels. The bars are centred on the
 -- portrait, their frames starting just under its ring; the name sits above the health bar.
 function Unit:Layout()
+    if self:Vanilla() then return self:LayoutVanilla() end
+    -- Back from the vanilla frame: its art away, our frames and the portrait's ring back.
+    if self.vanillaArt then
+        self.vanillaArt:Hide()
+        self.vanillaNameBack:Hide()
+        self.healthBox:SetShown(true)
+        self.powerBox:SetShown(true)
+        self.portrait.vanilla = nil
+        self:VanillaDruid(false)
+        self:VanillaCast(false)
+    end
     local cfg, db = self:Cfg(), ns.db
     local o = cfg.offsets
     local root = self.root
@@ -763,18 +1244,35 @@ function Unit:LayoutIcons()
     icons.leader:SetSize(size, size)
     icons.status:SetSize(size * 1.2, size * 1.2)
     icons.pvp:SetSize(size * 1.6, size * 1.6)
+    if icons.role then icons.role:SetSize(size, size) end
     if self.portraitShown then
         local f, D = p.frame, g.P
         icons.raid:SetPoint("CENTER", f, "TOP", 0, 0)
         icons.leader:SetPoint("CENTER", f, "CENTER", -out * D * 0.30, D * 0.41)
         icons.status:SetPoint("CENTER", f, "CENTER", -out * D * 0.08, -D * 0.46)
         icons.pvp:SetPoint("CENTER", f, "CENTER", out * (D * 0.5 + size * 0.55), D * 0.06)
+        -- The role: at the portrait's lower edge, on the bars' side (the level badge is on the other).
+        if icons.role then icons.role:SetPoint("CENTER", f, "CENTER", -out * D * 0.38, -D * 0.36) end
+        -- The pet's happiness: at the portrait's top outer corner (the level badge is at its lower
+        -- outer edge), sized to the portrait, nudged by the happiness offsets.
+        if icons.happiness then
+            local o = self:Cfg().offsets
+            icons.happiness:SetSize(D * 0.5, D * 0.5)
+            icons.happiness:SetPoint("CENTER", f, "CENTER", out * D * 0.38 + (o.happinessX or 0),
+                D * 0.38 + (o.happinessY or 0))
+        end
     else
         local s = self.stack
         icons.raid:SetPoint("CENTER", s, outer, out * (g.reach + size * 0.6), 0)
         icons.leader:SetPoint("CENTER", s, "TOP" .. outer, 0, g.reach)
         icons.status:SetPoint("CENTER", s, "BOTTOM" .. outer, 0, 0)
         icons.pvp:SetPoint("CENTER", s, outer, out * (g.reach + size * 1.4), 0)
+        if icons.role then icons.role:SetPoint("CENTER", s, "TOP" .. outer, -out * size, g.reach) end
+        if icons.happiness then
+            local o = self:Cfg().offsets
+            icons.happiness:SetSize(size, size)
+            icons.happiness:SetPoint("CENTER", s, "TOP" .. outer, (o.happinessX or 0), g.reach + (o.happinessY or 0))
+        end
     end
     -- Resting (yours): at the portrait's top outer corner, or beside the level badge, nudged by
     -- the rest offsets.
@@ -807,6 +1305,7 @@ function Unit:LayoutAround()
     local o = cfg.offsets
     if not g then return end
     local stack, reach, px = self.stack, g.reach, g.px
+    if self.rule then self.rule.bar = nil end -- the rule's strip placed afresh, at the new pixel size
 
     -- y is up from the stack's top; each side's edge, from which the next thing goes.
     local edge = { below = -(g.stackH + reach), above = reach + g.nameH }
@@ -842,6 +1341,19 @@ function Unit:LayoutAround()
         holder:SetSize(w, h)
         self.druidBox:Apply()
         self.druid:ApplyTexture(cfg.powerTexture)
+        -- In the vanilla frame: the art's bar slot round it.
+        if self.vanillaArt and self.vanillaArt:IsShown() then self:VanillaDruid(true) end
+        -- Its text at its own size (druidTextSize; 0: the bar text's, no taller than the bar), at
+        -- its ends and middle.
+        local size = (cfg.druidTextSize or 0) > 0 and cfg.druidTextSize
+            or math.max(6, math.min(cfg.textSize, cfg.druidManaHeight + 1))
+        for _, slot in ipairs(SLOTS) do
+            local fs = self.texts.druid[slot]
+            ns.Media:SetFont(fs, db.font, size, db.outline)
+            fs:ClearAllPoints()
+            local at = slot == "Left" and "LEFT" or slot == "Right" and "RIGHT" or "CENTER"
+            fs:SetPoint(at, holder, at, slot == "Left" and 2 or slot == "Right" and -2 or 0, 0)
+        end
         if self.druidShown then
             holder:ClearAllPoints()
             holder:SetPoint("TOPLEFT", stack, "TOPLEFT", x + o.druidX, Put(Side(cfg.druidManaSide), h, true) + o.druidY)
@@ -872,6 +1384,8 @@ function Unit:LayoutAround()
         c.gauge:ApplyTexture()
         ns.Media:SetFont(c.label, db.font, math.max(8, cfg.textSize), db.outline)
         ns.Media:SetFont(c.time, db.font, math.max(8, cfg.textSize), db.outline)
+        -- In the vanilla frame: Classic's small cast bar frame round it.
+        self:VanillaCast(self.vanillaArt and self.vanillaArt:IsShown() or false)
     end
     local function PlaceCast()
         c.holder:ClearAllPoints()
@@ -996,15 +1510,25 @@ function Unit:Update(full)
     -- Name and level (in the badge, or above the bars with no portrait).
     local fake = not unit and s or nil
     if self.nameShown then ns.SetUnitText(self.nameText, "name", unit, fake) else self.nameText:Hide() end
-    if cfg.showLevel and self.portraitShown then
+    local vanilla = self.vanillaArt and self.vanillaArt:IsShown()
+    if vanilla then
+        if cfg.showLevel then ns.SetUnitText(self.levelText, "level", unit, fake) end
+    elseif cfg.showLevel and self.portraitShown then
         ns.SetUnitText(self.portrait.level, "level", unit, fake)
     elseif self.levelAbove then
         ns.SetUnitText(self.levelText, "level", unit, fake)
     end
 
     if full then self:UpdatePortrait() end
-    -- The dragon round an elite's or rare's portrait.
-    if self.portraitShown and cfg.dragons then
+    -- The dragon round an elite's or rare's portrait (the vanilla frame's is in its art).
+    if vanilla then
+        self.dragonShown = false
+        if cfg.dragons ~= nil then self.portrait:SetDragon(nil) end
+        local classification = s.classification
+        if unit then classification = UnitClassification(unit) end
+        self:VanillaArt(classification)
+        self:VanillaNameColour(unit)
+    elseif self.portraitShown and cfg.dragons then
         -- The classification may be secret: handed on untested (SetDragon reads it safely).
         local classification = s.classification
         if unit then classification = UnitClassification(unit) end
@@ -1015,6 +1539,9 @@ function Unit:Update(full)
     self:UpdateIcons()
     self:UpdateGlow()
     self:UpdateRange()
+    -- Whether it's idle now: a unit that turns up already at rest (a pet summoned at full health
+    -- and focus) sends no health or power change to look again on.
+    self:UpdateFade()
     if full then
         if self.cast then self:UpdateCast() end
         if self.auras then
@@ -1038,6 +1565,7 @@ function Unit:UpdateHealth(instant)
         r, g, b = c.r, c.g, c.b
     end
     self.health:SetColor(r, g, b)
+    self:UpdatePredict()
     -- The name above the bars: gold like the game's, white, or in the health bar's colour.
     if cfg.namePos == "above" then
         local mode = ns.db.nameColor
@@ -1114,12 +1642,23 @@ function Unit:UpdatePower(instant)
         elseif show then
             self.druid:SetValues(70, 100, true)
         end
+        -- Its text: your mana's (the words' power is mana, whatever the form shows).
+        for _, slot in ipairs(SLOTS) do
+            local fs = self.texts.druid[slot]
+            if show then
+                ns.SetUnitText(fs, cfg.text["druid" .. slot], InForm() and "player" or nil,
+                    not InForm() and DRUID_SAMPLE or nil, true, MANA)
+            else
+                fs:Hide()
+            end
+        end
         if show ~= self.druidShown then
             self.druidShown = show
             self.druidHolder:SetShown(show)
             self:LayoutAround()
         end
     end
+    self:UpdateRule()
 end
 
 function Unit:UpdatePortrait()
@@ -1177,6 +1716,42 @@ local function ShowPvP(tex, unit)
     return true
 end
 
+-- The group role: the group finder's own role icons; in a raid with no role, a main tank or main
+-- assist's mark instead. Samples while unlocked (the party: a tank, a healer, then damage).
+local ROLE_ATLAS = { TANK = "groupfinder-icon-role-large-tank", HEALER = "groupfinder-icon-role-large-heal",
+    DAMAGER = "groupfinder-icon-role-large-dps" }
+local SAMPLE_ROLES = { "TANK", "HEALER", "DAMAGER", "DAMAGER" }
+
+local function ShowRole(tex, unit, kind, index)
+    local role
+    if unit then
+        role = Safe(UnitGroupRolesAssigned(unit))
+    elseif not ns.db.locked then
+        role = kind == "party" and SAMPLE_ROLES[index or 1] or "DAMAGER"
+    end
+    if role == "DAMAGER" and not ns.db.icons.roleDamage then role = nil end
+    local atlas = ROLE_ATLAS[role or ""]
+    if atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas) then
+        tex:SetTexCoord(0, 1, 0, 1)
+        tex:SetAtlas(atlas)
+        return true
+    end
+    if unit and IsInRaid() and GetPartyAssignment then
+        local file
+        if Safe(GetPartyAssignment("MAINTANK", unit)) then
+            file = "Interface\\GroupFrame\\UI-Group-MainTankIcon"
+        elseif Safe(GetPartyAssignment("MAINASSIST", unit)) then
+            file = "Interface\\GroupFrame\\UI-Group-MainAssistIcon"
+        end
+        if file then
+            tex:SetTexture(file)
+            tex:SetTexCoord(0, 1, 0, 1)
+            return true
+        end
+    end
+    return false
+end
+
 function Unit:UpdateIcons()
     local unit = self.shownUnit
     if unit == false then return end
@@ -1192,6 +1767,24 @@ function Unit:UpdateIcons()
     end
     -- Players only: faction guards are flagged too, and a badge on every guard is noise.
     icons.pvp:SetShown(cfg.pvp and unit ~= nil and Safe(UnitIsPlayer(unit)) and ShowPvP(icons.pvp, unit) or false)
+    if icons.happiness then
+        icons.happiness:SetShown(cfg.happiness and self:ShowHappiness(unit) or false)
+    end
+    if icons.role then
+        icons.role:SetShown(cfg.role and ShowRole(icons.role, unit, self.kind, self.index) or false)
+    end
+end
+
+-- A hunter's pet only (FrogLib.Unit: others have no happiness), in the game's own faces; a
+-- happy sample while unlocked.
+function Unit:ShowHappiness(unit)
+    local happiness
+    if unit then happiness = FrogLib.Unit.PetHappiness() end
+    if not happiness and unit == nil and not ns.db.locked then happiness = 3 end
+    local atlas = FrogLib.Unit.HAPPINESS_ATLAS[happiness]
+    if not atlas then return false end
+    self.icons.happiness:SetAtlas(atlas)
+    return true
 end
 
 -- The soft glow round the bars and the portrait: threat (player, party: yellow to red while
@@ -1295,10 +1888,36 @@ function Unit:UpdateFade(force)
     if fade and fade.enabled and unit then
         local _
         idle, _, secret = self.idle:Evaluate({ unit = unit, noTarget = fade.noTarget, hover = self.hover,
-            unlocked = not ns.db.locked, editMode = true })
+            unlocked = not ns.db.locked, editMode = true, ignorePower = self:PetLike() })
     end
     self.fade:SetGate((idle and secret) and unit or nil)
     self.fade:Set(idle and fade.alpha or 1, force and "now" or nil)
+end
+
+-- A pet's frame (yours, a party member's): its power is left out of "idle". Focus refills in a
+-- few seconds and ticks on even when full (the game may hide it, so it never seems to settle).
+function Unit:PetLike()
+    return self.kind == "pet" or self.kind == "partypet"
+end
+
+-- /ff idle: whether this frame counts as idle now, and if not why; what its fade is doing.
+function Unit:IdleReport()
+    local fade, unit = self:Cfg().fade, self.shownUnit
+    local idle, why, secret = false, "fade when idle is off", false
+    if fade and fade.enabled then
+        if not unit then
+            why = "no unit (a sample)"
+        else
+            idle, why, secret = self.idle:Evaluate({ unit = unit, noTarget = fade.noTarget, hover = self.hover,
+                unlocked = not ns.db.locked, editMode = true, ignorePower = self:PetLike() })
+        end
+    end
+    local f = self.fade
+    local alpha = self.fader:GetAlpha()
+    ns.Print(string.format("%s (%s): %s%s; fading to %s, now %s, frame %s%s.", self.key, tostring(unit),
+        idle and "idle" or "not idle", why and (": " .. why) or "", tostring(f.target),
+        string.format("%.2f", f.now or -1), issecret(alpha) and "hidden by the game" or string.format("%.2f", alpha),
+        f.gate and (", through the full-health gate on " .. f.gate) or ""))
 end
 
 -- A change to health or power: note it, show the frame, and look again once things have been

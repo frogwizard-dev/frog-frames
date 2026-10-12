@@ -5,7 +5,8 @@ local _, ns = ...
 --              (Media\Bezel.tga: a black outline, two dark grey lines lit along the top and a
 --              black inner line, which curves in over the bar's corners to round the fill too);
 --   "modern":  a plain fill with nothing round it but a 1px black edge;
---   "forever": the cooldown manager's bar fill, in our Forever-style frame (FrogLib's).
+--   "forever": the cooldown manager's bar fill, in our Forever-style frame (FrogLib's);
+--   "stone":   Classic's status bar fill in the carved stone of Classic's action bar (FrogLib's).
 -- A bar (ns.CreateBar) is the fill and its track; a box (ns.CreateBox) is the frame round one.
 -- The art is made by _tools\make_frogframes_art.py.
 
@@ -32,6 +33,7 @@ local LOOKS = {
         track = { 0, 0, 0, 0.6 } },
     forever = { atlas = "UI-HUD-CoolDownManager-Bar", texture = "Interface\\TargetingFrame\\UI-StatusBar",
         border = "forever", track = { 0, 0, 0, 0.6 } },
+    stone = { texture = "Interface\\TargetingFrame\\UI-StatusBar", border = "carved", track = { 0.05, 0.05, 0.05, 0.9 } },
 }
 
 function ns.Look()
@@ -52,20 +54,21 @@ local function Thick()
     return (ns.db and ns.db.frameThickness) or 1
 end
 
--- How far a bar's frame reaches outside it, in `frame`'s units: the classic frame 4 texels, the
--- Forever frame 2, the modern edge 1 pixel.
+-- How far a bar's frame reaches outside it, in `frame`'s units: the classic and carved frames 4
+-- texels, the Forever frame 2, the modern edge 1 pixel.
 function ns.BorderReach(frame)
     local border, px = ns.Look().border, FrogLib.Pixel(frame)
-    if border == "bezel" then return BEZEL.width * Thick() * px end
+    if border == "bezel" or border == "carved" then return BEZEL.width * Thick() * px end
     if border == "forever" then return 2 * Thick() * px end
     return px
 end
 
 -- From one bar's fill to the next one's (the health and power bars), in `frame`'s units: their
--- frames touch, the classic ones sharing all four of their lines (the lower one drawn on top).
+-- frames touch, the classic and carved ones sharing all four of their lines (the lower one drawn
+-- on top).
 function ns.BarGap(frame)
     local border, px = ns.Look().border, FrogLib.Pixel(frame)
-    if border == "bezel" then return BEZEL.width * Thick() * px end
+    if border == "bezel" or border == "carved" then return BEZEL.width * Thick() * px end
     if border == "forever" then return 4 * Thick() * px + px end
     return 3 * px
 end
@@ -174,6 +177,7 @@ function ns.CreateBox(region)
         x.bezel[key] = t
     end
     x.forever = Borders.Forever(x.overlay, "OVERLAY", 5)
+    x.carved = Borders.Carved(x.overlay, "OVERLAY", 5)
     x.edges = Borders.Edges(x.overlay, x.overlay, "OVERLAY", 6)
     return x
 end
@@ -227,6 +231,8 @@ function Box:Apply()
     if border == "bezel" then self:PlaceBezel() end
     self.forever:SetShown(border == "forever")
     if border == "forever" then self.forever:Place(Thick()) end
+    self.carved:SetShown(border == "carved")
+    if border == "carved" then self.carved:Place(Thick()) end
     self.edges:SetShown(border == "edge")
     if border == "edge" then self.edges:Place(1, 0, { r = 0, g = 0, b = 0 }) end
 end
