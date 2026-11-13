@@ -385,43 +385,12 @@ function Unit:UpdateRule()
 end
 
 -- Heal prediction on the health bar: your incoming heals (bright green), everyone else's (darker
--- green) and damage shields (white), each a bar of its own, one after the other from the end of the
--- health bar's fill. The amounts can be secret, so they're never added up here: each bar is as wide
--- as the health bar, set from 0 to the unit's maximum health and given its amount (status bars
--- take secret values), and starts where the one before it ends (the fill texture's right edge).
--- The game's own heal prediction calculator splits yours from others' and caps them at the
--- health that's missing; anything past the bar's end is cut off.
-local PREDICT_COLORS = { mine = { 0.35, 1, 0.45, 0.65 }, others = { 0.1, 0.7, 0.3, 0.55 }, shield = { 1, 1, 1, 0.5 } }
+-- green) and damage shields (white), one after the other from the end of the health bar's fill
+-- (FrogLib.Predict, shared with XIVPlayer's gauge).
 local PREDICT_SAMPLE = { mine = 12, others = 8, shield = 6 } -- of 100, while unlocked
 
 function Unit:BuildPredict()
-    local hb = self.health.bar
-    local clip = CreateFrame("Frame", nil, hb)
-    clip:SetAllPoints()
-    clip:SetClipsChildren(true)
-    local function Bar(key, after)
-        local s = CreateFrame("StatusBar", nil, clip)
-        s:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
-        local c = PREDICT_COLORS[key]
-        s:SetStatusBarColor(c[1], c[2], c[3], c[4])
-        s:SetMinMaxValues(0, 1)
-        s:SetValue(0)
-        s:SetPoint("TOPLEFT", after, "TOPRIGHT")
-        s:SetPoint("BOTTOMLEFT", after, "BOTTOMRIGHT")
-        return s
-    end
-    local p = { clip = clip }
-    p.mine = Bar("mine", hb:GetStatusBarTexture())
-    p.others = Bar("others", p.mine:GetStatusBarTexture())
-    p.shield = Bar("shield", p.others:GetStatusBarTexture())
-    if CreateUnitHealPredictionCalculator then p.calc = CreateUnitHealPredictionCalculator() end
-    self.predict = p
-    local function Size()
-        local w = hb:GetWidth()
-        for _, key in ipairs({ "mine", "others", "shield" }) do p[key]:SetWidth(math.max(1, w)) end
-    end
-    hb:HookScript("OnSizeChanged", Size)
-    Size()
+    self.predict = FrogLib.Predict.New(self.health.bar)
 end
 
 function Unit:UpdatePredict()
@@ -429,30 +398,14 @@ function Unit:UpdatePredict()
     if not p then return end
     local unit = self.shownUnit
     if not self:Cfg().healPredict or unit == false then
-        p.clip:Hide()
+        p:SetShown(false)
         return
     end
-    p.clip:Show()
-    local mine, others, shield, max
+    p:SetShown(true)
     if unit then
-        max = UnitHealthMax(unit)
-        if p.calc and UnitGetDetailedHealPrediction then
-            pcall(UnitGetDetailedHealPrediction, unit, "player", p.calc)
-            local _, fromMe, fromOthers = p.calc:GetIncomingHeals()
-            mine, others = fromMe, fromOthers
-            shield = p.calc:GetDamageAbsorbs()
-        else
-            -- No calculator: all incoming heals in one bar (they can't be split without sums).
-            mine = UnitGetIncomingHeals and UnitGetIncomingHeals(unit) or 0
-            others = 0
-            shield = UnitGetTotalAbsorbs and UnitGetTotalAbsorbs(unit) or 0
-        end
+        p:Update(unit)
     else
-        max, mine, others, shield = 100, PREDICT_SAMPLE.mine, PREDICT_SAMPLE.others, PREDICT_SAMPLE.shield
-    end
-    for key, v in pairs({ mine = mine or 0, others = others or 0, shield = shield or 0 }) do
-        p[key]:SetMinMaxValues(0, max or 1)
-        p[key]:SetValue(v)
+        p:SetValues(100, PREDICT_SAMPLE)
     end
 end
 

@@ -1,5 +1,9 @@
 # FrogFrames
 
+## 0.1.1
+
+- Heal prediction now comes from FrogLib, shared with XIVPlayer. It looks and works the same.
+
 ## 0.1.0
 
 First version: Classic-style unit frames for you, your pet, your target and its target, your focus and your party (up to four, with their pets if you like). No raid frames.
