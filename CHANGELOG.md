@@ -1,5 +1,15 @@
 # FrogFrames
 
+## 0.1.2
+
+- Uses far less CPU and memory: in a ten-minute test session, about half the game calls, a tenth of the garbage and a fifth less memory. A burst of health, power or aura changes is drawn once rather than once per event, and each power change is handled once (the game sends two events for it); frames only listen to the events their settings use, and health, power and flag changes redraw only what they change; health text uses the health just read for its bar rather than asking the game again; nothing runs every frame while there's nothing to animate (the hit text over the portrait, the range and target-of-target checks), and party frames hear about range changes from the game rather than checking; icons, glows, empty text, the mana rule and the bars' frames are only touched when they change. Frame borders, party pets, the 3D portrait, hit text, your cast bar, the five-second rule, druid mana, glows and the unlock tint are only made when a frame uses them. It looks and works the same.
+- Your target's target redraws as soon as your target switches targets, rather than at the next check.
+- Buff and debuff rows no longer build a fresh set of icons (leaving the old ones behind) each time the row next to them opens or closes, and folding a row no longer restyles the cast bar, druid bar, combo points and fonts.
+- Smaller download: the portrait, frame and dragon art is saved compressed (the same pictures, about a quarter of the size), and the package leaves out this changelog.
+- The Place boxes in the settings follow the frame: after dragging it or "Reset position" they showed (and changed) its old place until a reload.
+- A Forever update hid the size of every hit from add-ons, so a hit that was fully absorbed or blocked showed "0" over the portrait. It says Absorb or Block again, and a partly blocked hit shows its damage with "(Block)" after it, as Blizzard's own portrait does.
+- Under the hood: the five-second rule's strip under your mana bar now comes from FrogLib, shared with Personal Resource Tweaks and XIVPlayer; clearer names and shorter notes throughout. It looks and works the same.
+
 ## 0.1.1
 
 - Heal prediction now comes from FrogLib, shared with XIVPlayer. It looks and works the same.

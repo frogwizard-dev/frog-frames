@@ -2,7 +2,7 @@
 ## Title: FrogFrames
 ## Category: Frog Wizard
 ## Notes: Classic-style unit frames: you, your pet, your target and its target, your focus and your party, each with a round portrait, a name strip and health and power bars, in four looks (Classic, Modern, Forever or Stone) or the 1.x vanilla frame.
-## Version: 0.1.1
+## Version: 0.1.2
 ## X-Curse-Project-ID: 1794204
 ## SavedVariables: FrogFramesDB
 ## IconTexture: Interface\Icons\INV_Misc_GroupNeedMore
@@ -10,7 +10,6 @@
 
 Libs\FrogLib\FrogLib.xml
 Core.lua
-Media.lua
 Bars.lua
 Portrait.lua
 Auras.lua

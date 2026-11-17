@@ -1,32 +1,24 @@
 local ADDON, ns = ...
 
--- FrogFrames: Classic-style unit frames for you, your pet, your target and its target, your
--- focus and your party (and their pets). Each is a round portrait with the level in a badge on
--- its edge, and tucked in behind its ring a health bar and a thinner power bar, each in its own
--- frame, the name above them. Three looks: "classic" (glossy bars in dark bevelled frames, a dark
--- metal ring), "modern" (flat fills with a 1px black edge, a plain dark ring) or "forever" (the
--- cooldown manager's bars in our Forever-style frames, a metallic ring).
--- Unit.lua draws one frame; Frames.lua makes them all. Settings per kind of frame live under
--- units.<kind> (including their cast bars and auras); the look, the font, the icons and the combo
--- points at the top.
+-- FrogFrames: Classic-style unit frames for you, your pet, your target and its target, your focus
+-- and your party (and their pets): a round portrait with the level in a badge on its edge, health
+-- and power bars tucked in behind its ring, the name above. Unit.lua draws one; Frames.lua makes
+-- them all. Settings per kind of frame live under units.<kind>; the look, font and icons at the top.
 
--- A frame's cast bar: shown or not; below or above the bars (side), and on that side next to them
--- or beyond the auras there (position "near" / "beyond"); the time left and the spell's icon;
--- its size (width 0: the bars' width).
+-- A frame's cast bar: shown or not; below or above the bars (side), next to them or beyond the auras
+-- there (position "near" / "beyond"); the time left and the spell's icon; its size (width 0: the bars').
 local function CastDefaults(height)
     return { enabled = true, side = "below", position = "near", showTime = true, icon = true, width = 0, height = height }
 end
 
--- A frame's status effects, in rows (as FrogTarget's): debuffs (yours, then everyone else's, or
--- only yours: mode) and buffs, each below or above the bars (side); order: which row is nearer
--- the bars when they're on the same side; rounded icons (like FrogUI's action buttons) or square;
--- fold: an empty row closes up, the rows beyond it moving in.
+-- A frame's status effects, in rows (as FrogTarget's): debuffs (mode: yours, then everyone else's, or
+-- only yours) and buffs, each below or above the bars (side). order: which row is nearer the bars.
 local function AuraDefaults()
     return {
+        -- fold: an empty row closes up, the rows beyond it moving in; rounded: like the action buttons.
         enabled = true, order = "debuffs", spacing = 2, rowGap = 4, rounded = true, fold = true,
-        -- perRow: icons on a line before it wraps (0: one long line, up to max). The timer:
-        -- timerPos "icon" (along the icon's bottom edge, inside it) or "below" (under it, the
-        -- icons spaced to fit), timerScale per cent of the icon's size.
+        -- perRow: icons on a line before it wraps (0: one long line, up to max). timerPos "icon" (inside
+        -- its bottom edge) or "below" (under it, the icons spaced to fit); timerScale: % of the icon.
         debuffs = { enabled = true, side = "below", mode = "all", size = 24, max = 12, perRow = 0,
             showTimer = true, timerPos = "icon", timerScale = 40 },
         buffs = { enabled = true, side = "below", size = 22, max = 12, perRow = 0,
@@ -39,14 +31,13 @@ local function NoText()
     return { healthLeft = "", health = "", healthRight = "", powerLeft = "", power = "", powerRight = "" }
 end
 
--- The settings every kind of frame has. Sizes are in interface units, put on whole pixels.
--- text: templates for the three slots on each bar (see Compile).
-local function UnitDefaults(t)
-    local d = {
+-- The settings every kind of frame has, with `own` over them. Sizes are in interface units, put on
+-- whole pixels. text: templates for the three slots on each bar.
+local function UnitDefaults(own)
+    local defaults = {
         enabled = true,
-        -- Blizzard's own 1.x frame art (Unit.lua's vanilla frame; not the party's pets): with a
-        -- large health bar over the name box (the big frame), and the frame's own bar textures
-        -- rather than Classic's.
+        -- Blizzard's own 1.x frame art (Unit.lua's vanilla frame; not the party's pets): vanillaThick, a
+        -- large health bar over the name box; vanillaTextures, the frame's own bar textures, not Classic's.
         vanilla = false, vanillaThick = false, vanillaTextures = false,
         vanillaLevelX = 0, vanillaLevelY = 0, -- the vanilla frame's level, nudged (any fraction)
         scale = 1,
@@ -67,11 +58,8 @@ local function UnitDefaults(t)
             druidLeft = "", druid = "", druidRight = "" }, -- druid: your druid mana bar's (the player frame)
         hitText = false,        -- damage and heals floating over the portrait (Blizzard's combat feedback)
         fadeRange = false,      -- fade while out of range
-        -- Nudges, in interface units (right and up are positive): the portrait and the bars, each
-        -- on its own (the frame grows to cover both); each text slot on the bars (healthLeft,
-        -- health = the middle one, healthRight, and the power ones; the end ones start 4 in from
-        -- their ends); the name; the level badge; the resting icon; and each part that hangs off
-        -- the frame, from the place its "where" setting gives it.
+        -- Nudges in interface units, right and up +: the portrait, the bars, each text slot (the end ones
+        -- 4 in from their ends), the name, badge, resting icon, and each part hanging off the frame.
         offsets = {
             portraitX = 0, portraitY = 0, barsX = 0, barsY = 0,
             healthLeftX = 4, healthLeftY = 0, healthX = 0, healthY = 0, healthRightX = -4, healthRightY = 0,
@@ -87,8 +75,8 @@ local function UnitDefaults(t)
         -- targeted, to `alpha`.
         fade = { enabled = false, alpha = 0, noTarget = true },
     }
-    for k, v in pairs(t) do d[k] = v end
-    return d
+    for key, value in pairs(own) do defaults[key] = value end
+    return defaults
 end
 
 ns.defaults = {
@@ -122,7 +110,7 @@ ns.defaults = {
             manaRule = true,    -- the five-second rule: a strip along whichever bar shows your mana
             healPredict = true, -- incoming heals (yours, others') and shields on the health bar
             -- Your own cast bar (off to start; Blizzard's stays): in a vanilla frame, 1.x's player cast bar.
-            cast = (function() local c = CastDefaults(13); c.enabled = false; c.side = "below"; return c end)(),
+            cast = (function() local cast = CastDefaults(13); cast.enabled = false; cast.side = "below"; return cast end)(),
             druidManaSide = "below",
             glow = false,       -- a soft light round the frame while resting (gold) or fighting (red)
             -- Resting "zzz": "portrait" (its top outer corner), "badge" (beside the level badge)
@@ -186,33 +174,74 @@ ns.defaults = {
     },
 }
 
-ns.issecret = FrogLib.issecret
-ns.Safe = FrogLib.Safe
-
 ns.Print = FrogLib.Util.Printer("FrogFrames", "66dd66")
+-- The bar textures and fonts the settings offer, and setting a font safely (FrogLib's Media).
+ns.Media = FrogLib.Media.New()
+
+-- A font set only when it isn't already the one asked for: layouts run on every fold of an aura row, and
+-- Media's SetFont does real work each time. A drop shadow's offset follows the pixel size, so it's set every time.
+function ns.SetFont(fontString, path, size, outline)
+    if outline ~= "SHADOW" and fontString.ffFont == path and fontString.ffSize == size
+        and fontString.ffOutline == outline then return end
+    fontString.ffFont, fontString.ffSize, fontString.ffOutline = path, size, outline
+    ns.Media:SetFont(fontString, path, size, outline)
+end
+
+-- Whether any of the values differ from the ones `owner` was last styled with (noting them if so): the styling
+-- in a layout is done again only when what it's made from has changed.
+function ns.Changed(owner, ...)
+    local last = owner.ffStyle
+    if not last then
+        last = {}
+        owner.ffStyle = last
+    end
+    local changed = false
+    for i = 1, select("#", ...) do
+        local value = select(i, ...)
+        if last[i] ~= value then
+            last[i] = value
+            changed = true
+        end
+    end
+    return changed
+end
 
 local CopyDefaults = FrogLib.Util.CopyDefaults
-ns.CopyDefaults = CopyDefaults
-
--- A fresh copy of a default (for "reset position").
-ns.CopyOf = FrogLib.Util.Copy
 
 ------------------------------------------------------------------------------
 -- Text templates
 ------------------------------------------------------------------------------
 
--- "value / max" -> ("%d / %d", {value, max}): FrogLib.Text, with FrogLib.Unit's words (name,
--- level, class, value, max, percent (percent.1 for a decimal), power...), as FrogTarget and
--- XIVTarget. Values may be secret, so they're only ever formatted engine-side by SetFormattedText.
--- Fills a FontString from a template for a unit. fake: the words' values for a sample (unlocked
--- with no unit); power: value, max and percent are the unit's power (of `kind`) rather than its
--- health. The level is coloured by difficulty (levelColor), your own plain.
-local textOpts = {}
-function ns.SetUnitText(fs, template, unit, fake, power, kind)
-    textOpts.fake, textOpts.power, textOpts.kind = fake or nil, power, kind
-    textOpts.levelColor = ns.db.levelColor
-    textOpts.classColor = true
-    FrogLib.Unit.SetText(fs, template, unit, textOpts)
+-- A font string from a template for a unit (FrogLib.Unit's words: name, level, class, value, max,
+-- percent...). fake: the words' values for a sample; power: value, max and percent are the unit's
+-- power (of `kind`); values: what was read for the bar a moment ago ({ value, max }), so it isn't
+-- asked for again. Values may be secret: only ever formatted engine-side by SetFormattedText.
+local textOptions = {}
+local blank = {} -- [template] = whether it has nothing to show (asked once per template)
+
+-- Hides a font string once: it's asked on every update, and a hidden one stays hidden until it's shown again
+-- (by a template with words in it, or by the health bar's status, which clears the mark).
+function ns.HideText(fontString)
+    if fontString.ffHidden then return end
+    fontString:Hide()
+    fontString.ffHidden = true
+end
+
+function ns.SetUnitText(fontString, template, unit, fake, power, kind, values)
+    local empty = type(template) ~= "string" or blank[template]
+    if empty == nil then
+        empty = not template:find("%S")
+        blank[template] = empty
+    end
+    if empty then
+        ns.HideText(fontString)
+        return
+    end
+    fontString.ffHidden = nil
+    textOptions.fake, textOptions.power, textOptions.kind, textOptions.values = fake or nil, power, kind, values
+    textOptions.levelColor = ns.db.levelColor
+    textOptions.classColor = true
+    FrogLib.Unit.SetText(fontString, template, unit, textOptions)
 end
 
 ------------------------------------------------------------------------------
@@ -224,6 +253,10 @@ end
 local pending, told
 function ns.Refresh()
     if not ns.ready then return end
+    -- What each frame listens to (and the parts that need it) follows at once, even in combat: none of it is
+    -- protected.
+    for _, frame in ipairs(ns.frameList) do frame:RegisterEvents() end
+    ns.UpdateTicker()
     if InCombatLockdown() then
         pending = true
         if not told then
@@ -241,10 +274,11 @@ end
 local warned
 function ns.CheckFrogTarget()
     if warned or not FrogLib.Loaded("FrogTarget") then return end
-    local db, ft = ns.db.units, _G.FrogTargetDB
+    local units, frogTarget = ns.db.units, _G.FrogTargetDB
     local both = {}
-    if db.target.enabled then both[#both + 1] = "target" end
-    if db.focus.enabled and type(ft) == "table" and type(ft.focus) == "table" and ft.focus.enabled then
+    if units.target.enabled then both[#both + 1] = "target" end
+    if units.focus.enabled and type(frogTarget) == "table" and type(frogTarget.focus) == "table"
+        and frogTarget.focus.enabled then
         both[#both + 1] = "focus"
     end
     if #both > 0 then
@@ -255,22 +289,22 @@ function ns.CheckFrogTarget()
 end
 
 -- Settings saved by an earlier build, brought up to date, a step for each version.
-local Copy = FrogLib.Util.Merge -- src's values over dst's
+local Merge = FrogLib.Util.Merge -- source's values over target's
 
 function ns.Migrate(db)
-    local v = db.version
-    if not v then return end
+    local version = db.version
+    if not version then return end
     local units = type(db.units) == "table" and db.units or {}
-    if v < 2 then
+    if version < 2 then
         -- 0.1's first test build had a name strip and one box round the bars: its frames take
         -- the new shape's sizes (keeping where they are, whether they're on and their scale), and
         -- its cast bar places get their new names.
         local SHAPE = { "width", "healthHeight", "powerHeight", "portrait", "portraitSize", "nameSize",
             "textSize", "text", "showLevel" }
-        for kind, u in pairs(units) do
-            if type(u) == "table" and ns.defaults.units[kind] then
-                for _, key in ipairs(SHAPE) do u[key] = nil end
-                u.nameHeight, u.bigHealth = nil, nil
+        for kind, saved in pairs(units) do
+            if type(saved) == "table" and ns.defaults.units[kind] then
+                for _, key in ipairs(SHAPE) do saved[key] = nil end
+                saved.nameHeight, saved.bigHealth = nil, nil
             end
         end
         db.nameStrip, db.borderColor = nil, nil
@@ -279,7 +313,7 @@ function ns.Migrate(db)
         end
         if type(db.combo) == "table" then db.combo.spacing = nil end
     end
-    if v < 3 then
+    if version < 3 then
         -- The first redesign's test build: a bar texture picked in 0.1's first build hid the new
         -- look's glossy fill, so the look's own comes back; the resting glow is off now; the cast
         -- bar's height became each frame's own.
@@ -287,7 +321,7 @@ function ns.Migrate(db)
         if type(units.player) == "table" then units.player.glow = nil end
         if type(db.cast) == "table" then db.cast.height = nil end
     end
-    if v < 4 then
+    if version < 4 then
         -- The cast bar and the auras were shared by the target and focus: each gets its own copy
         -- of what was set, so nothing moves; the party's debuff row joins its own auras.
         local cast = type(db.cast) == "table" and db.cast or {}
@@ -295,95 +329,106 @@ function ns.Migrate(db)
         db.units = units
         for _, kind in ipairs({ "target", "focus" }) do
             if type(units[kind]) ~= "table" then units[kind] = {} end
-            local u = units[kind]
-            local c = {}
-            Copy(cast, c)
-            if type(u.cast) == "boolean" then c.enabled = u.cast end
-            c.width, c.height = u.castWidth, u.castHeight
-            u.cast, u.castWidth, u.castHeight = c, nil, nil
-            local a = {}
-            Copy(auras, a)
-            if type(u.auras) == "boolean" then a.enabled = u.auras end
-            u.auras = a
+            local saved = units[kind]
+            local ownCast = {}
+            Merge(cast, ownCast)
+            if type(saved.cast) == "boolean" then ownCast.enabled = saved.cast end
+            ownCast.width, ownCast.height = saved.castWidth, saved.castHeight
+            saved.cast, saved.castWidth, saved.castHeight = ownCast, nil, nil
+            local ownAuras = {}
+            Merge(auras, ownAuras)
+            if type(saved.auras) == "boolean" then ownAuras.enabled = saved.auras end
+            saved.auras = ownAuras
         end
         local party = units.party
         if type(party) == "table" and type(party.debuffs) == "table" then
             party.auras = { spacing = auras.spacing, rounded = auras.rounded, fold = auras.fold, debuffs = {} }
-            Copy(party.debuffs, party.auras.debuffs)
+            Merge(party.debuffs, party.auras.debuffs)
             party.debuffs = nil
         end
         db.cast, db.auras = nil, nil
     end
-    if v < 5 then
+    if version < 5 then
         -- The gap between the portrait and the bars became the bars' own left / right offset
         -- (away from the portrait: right for frames with it on the left, left for the others).
-        for kind, u in pairs(units) do
-            local o = type(u) == "table" and u.offsets
-            if type(o) == "table" and o.gap then
+        for kind, saved in pairs(units) do
+            local offsets = type(saved) == "table" and saved.offsets
+            if type(offsets) == "table" and offsets.gap then
                 local mirrored = kind == "target" or kind == "focus"
-                o.barsX = (o.barsX or 0) + (mirrored and -o.gap or o.gap)
-                o.gap = nil
+                offsets.barsX = (offsets.barsX or 0) + (mirrored and -offsets.gap or offsets.gap)
+                offsets.gap = nil
             end
         end
     end
-    if v < 6 then
+    if version < 6 then
         -- Each bar had one inset for its end texts and one up/down for all three: each text has
         -- its own x and y now, set to the same places.
-        for _, u in pairs(units) do
-            local o = type(u) == "table" and u.offsets
-            if type(o) == "table" then
+        for _, saved in pairs(units) do
+            local offsets = type(saved) == "table" and saved.offsets
+            if type(offsets) == "table" then
                 for _, bar in ipairs({ "health", "power" }) do
-                    local pad, y = o[bar .. "Pad"], o[bar .. "TextY"]
+                    local pad, y = offsets[bar .. "Pad"], offsets[bar .. "TextY"]
                     if pad ~= nil or y ~= nil then
                         pad, y = pad or 4, y or 0
-                        o[bar .. "LeftX"], o[bar .. "RightX"], o[bar .. "X"] = pad, -pad, 0
-                        o[bar .. "LeftY"], o[bar .. "Y"], o[bar .. "RightY"] = y, y, y
+                        offsets[bar .. "LeftX"], offsets[bar .. "RightX"], offsets[bar .. "X"] = pad, -pad, 0
+                        offsets[bar .. "LeftY"], offsets[bar .. "Y"], offsets[bar .. "RightY"] = y, y, y
                     end
-                    o[bar .. "Pad"], o[bar .. "TextY"] = nil, nil
+                    offsets[bar .. "Pad"], offsets[bar .. "TextY"] = nil, nil
                 end
             end
         end
     end
-    if v < 7 then
+    if version < 7 then
         -- Bigger icons and closer together (their timers went onto them): where the old
         -- defaults are still set, the new ones; sizes and spacing that were changed stay.
         local OLD = { target = { 22, 18 }, focus = { 22, 18 }, party = { 16 } }
         local NEW = { target = { 24, 22 }, focus = { 24, 22 }, party = { 18 } }
         for kind, old in pairs(OLD) do
-            local a = type(units[kind]) == "table" and units[kind].auras
-            if type(a) == "table" then
-                local rows = { a.debuffs, a.buffs }
+            local auras = type(units[kind]) == "table" and units[kind].auras
+            if type(auras) == "table" then
+                local rows = { auras.debuffs, auras.buffs }
                 for i, size in ipairs(old) do
-                    local r = rows[i]
-                    if type(r) == "table" and r.size == size then r.size = NEW[kind][i] end
+                    local row = rows[i]
+                    if type(row) == "table" and row.size == size then row.size = NEW[kind][i] end
                 end
-                if a.spacing == 3 then a.spacing = 2 end
+                if auras.spacing == 3 then auras.spacing = 2 end
             end
         end
     end
-    if v < 8 then
+    if version < 8 then
         -- The pet's frame fades when idle too, like your own (it was left out).
         local fade = type(units.pet) == "table" and units.pet.fade
         if type(fade) == "table" then fade.enabled = true end
     end
 end
 
-local f = CreateFrame("Frame")
-f:RegisterEvent("ADDON_LOADED")
-f:RegisterEvent("PLAYER_LOGIN")
-f:RegisterEvent("PLAYER_REGEN_ENABLED")
-f:RegisterEvent("PLAYER_REGEN_DISABLED")
-f:RegisterEvent("UI_SCALE_CHANGED")
-f:RegisterEvent("DISPLAY_SIZE_CHANGED")
-f:SetScript("OnEvent", function(_, event, arg1)
-    if event == "ADDON_LOADED" and arg1 == ADDON then
+-- UI scale: the pixel sizes change. A window being resized sends a stream of these: applied once a frame.
+local scaleQueued
+local function ScaleChanged()
+    scaleQueued = nil
+    ns.Refresh()
+end
+
+local loader = CreateFrame("Frame")
+loader:RegisterEvent("ADDON_LOADED")
+loader:RegisterEvent("PLAYER_LOGIN")
+loader:RegisterEvent("PLAYER_REGEN_ENABLED")
+loader:RegisterEvent("PLAYER_REGEN_DISABLED")
+loader:RegisterEvent("UI_SCALE_CHANGED")
+loader:RegisterEvent("DISPLAY_SIZE_CHANGED")
+loader:SetScript("OnEvent", function(_, event, addonName)
+    if event == "ADDON_LOADED" then
+        if addonName ~= ADDON then return end
+        loader:UnregisterEvent("ADDON_LOADED")
         FrogFramesDB = FrogFramesDB or {}
         local db = FrogFramesDB
         ns.Migrate(db)
+        ns.Migrate = nil -- never needed again
         CopyDefaults(ns.defaults, db)
         db.version = 8
         ns.db = db
     elseif event == "PLAYER_LOGIN" or (event == "PLAYER_REGEN_ENABLED" and not ns.ready and ns.db) then
+        loader:UnregisterEvent("PLAYER_LOGIN")
         -- The frames are secure: made out of combat (a reload mid-fight waits for its end).
         if InCombatLockdown() then return end
         ns.BuildAll()
@@ -392,7 +437,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         C_Timer.After(3, ns.CheckFrogTarget)
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Unlocked frames show samples and can't be dragged in combat: lock them as it starts
-        -- (this runs just before the lockdown does, so the frames can still be changed).
+        -- (this runs a moment before the lockdown does, so the frames can still be changed).
         if ns.ready and not ns.db.locked then
             ns.db.locked = true
             ns.ApplyAll()
@@ -400,28 +445,29 @@ f:SetScript("OnEvent", function(_, event, arg1)
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if pending then ns.Refresh() end
-    elseif ns.ready then
-        ns.Refresh() -- UI scale: the pixel sizes change
+    elseif ns.ready and not scaleQueued then
+        scaleQueued = true
+        C_Timer.After(0, ScaleChanged)
     end
 end)
 
 SLASH_FROGFRAMES1 = "/ff"
 SLASH_FROGFRAMES2 = "/frogframes"
-SlashCmdList.FROGFRAMES = function(msg)
-    msg = strtrim((msg or ""):lower())
-    if msg == "unlock" or msg == "lock" or msg == "move" then
+SlashCmdList.FROGFRAMES = function(input)
+    local command = strtrim((input or ""):lower())
+    if command == "unlock" or command == "lock" or command == "move" then
         if InCombatLockdown() then
             ns.Print("frames can't be moved in combat.")
             return
         end
-        ns.db.locked = msg == "lock" or (msg == "move" and not ns.db.locked)
+        ns.db.locked = command == "lock" or (command == "move" and not ns.db.locked)
         ns.Refresh()
         ns.Print(ns.db.locked and "frames locked." or "frames unlocked: drag them to move (samples show where there's no unit).")
         return
     end
-    if msg == "idle" then
-        for _, u in ipairs(ns.frameList or {}) do
-            if u.root:IsShown() then u:IdleReport() end
+    if command == "idle" then
+        for _, frame in ipairs(ns.frameList or {}) do
+            if frame.root:IsShown() then frame:IdleReport() end
         end
         return
     end

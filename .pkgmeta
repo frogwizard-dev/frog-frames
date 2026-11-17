@@ -7,6 +7,7 @@ manual-changelog:
 ignore:
   - Images
   - RELEASE_NOTES.md
+  - CHANGELOG.md
 
 externals:
   Libs/FrogLib:
