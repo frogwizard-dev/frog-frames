@@ -228,9 +228,15 @@ end
 function Portrait:Set(unit, mode)
     local who = unit or "player"
     if mode == "3d" then
-        -- Out of sight the game has no model to draw: the 2D picture instead.
+        -- Out of sight the game has no model to draw, nor for a unit whose identity it keeps secret (in an instance,
+        -- anyone not in your group and not a player's): the 2D picture instead.
         local visible = Safe(UnitIsVisible(who))
-        if visible ~= false and Safe(UnitIsConnected(who)) ~= false then
+        local hidden = false
+        if C_Secrets and C_Secrets.ShouldUnitIdentityBeSecret then
+            local asked, secret = pcall(C_Secrets.ShouldUnitIdentityBeSecret, who)
+            hidden = asked and (FrogLib.issecret(secret) or secret == true)
+        end
+        if visible ~= false and not hidden and Safe(UnitIsConnected(who)) ~= false then
             local model = self.model or self:BuildModel()
             self.pic:Hide()
             self.modelUnit = who

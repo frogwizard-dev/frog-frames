@@ -187,6 +187,14 @@ function ns.SetFont(fontString, path, size, outline)
     ns.Media:SetFont(fontString, path, size, outline)
 end
 
+-- The same for a name: through a font family, so names in other scripts draw.
+function ns.SetNameFont(fontString, path, size, outline)
+    if outline ~= "SHADOW" and fontString.ffFont == path and fontString.ffSize == size
+        and fontString.ffOutline == outline then return end
+    fontString.ffFont, fontString.ffSize, fontString.ffOutline = path, size, outline
+    ns.Media:SetNameFont(fontString, path, size, outline)
+end
+
 -- Whether any of the values differ from the ones `owner` was last styled with (noting them if so): the styling
 -- in a layout is done again only when what it's made from has changed.
 function ns.Changed(owner, ...)

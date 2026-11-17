@@ -128,9 +128,19 @@ local function Filter(row, settings)
     return settings.mode == "mine" and "HARMFUL|PLAYER" or "HARMFUL"
 end
 
+-- Whether aura data is kept secret now: asked first, as a refused aura read raises an error (caught, but building it
+-- is the costly part, and this runs on every aura change).
+local AurasSecret = C_Secrets and C_Secrets.ShouldAurasBeSecret
+local function Restricted()
+    if not AurasSecret then return false end
+    local ok, secret = pcall(AurasSecret)
+    return ok and (issecret(secret) or secret == true)
+end
+
 -- How many auras the unit has for a row (up to its max), or nil when the game won't say.
 function Auras:Count(row, settings)
     if not UnitExists(self.unit) then return 0 end
+    if Restricted() then return nil end
     for i = 1, settings.max do
         local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, self.unit, i, Filter(row, settings))
         if not ok or issecret(aura) then return nil end
@@ -143,6 +153,7 @@ end
 -- are any isn't: the first one's data comes back, or nothing does.
 function Auras:HasAny(row, settings)
     if not UnitExists(self.unit) then return false end
+    if Restricted() then return true end -- can't tell: keep the row open
     local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, self.unit, 1, Filter(row, settings))
     -- Can't tell: keep the row open.
     if not ok or issecret(aura) then return true end

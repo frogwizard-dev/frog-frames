@@ -1,5 +1,15 @@
 # FrogFrames
 
+## 0.1.3
+
+- An interrupted channel (Drain Life, a bandage) on a target or focus bar shows red "Interrupted" rather than ending as if finished, and a red bar no longer carries over to your new target.
+- Shift-, ctrl- and alt-click on a frame now target too.
+- The gamepad UI's target menu (Y) stays open with the target frame hidden.
+- Portraits no longer go blank after a loading screen; 3D portraits of units the game keeps anonymous (in instances) show the 2D picture instead of nothing.
+- Names in Russian, Korean or Chinese draw in every font.
+- Less work: your target's target looks at its health and power a few times a second and everything else once a second; aura rows skip the reads the game would refuse anyway.
+- Shared code (FrogLib 1.12.0): see its notes for the rest of what's fixed.
+
 ## 0.1.2
 
 - Uses far less CPU and memory: in a ten-minute test session, about half the game calls, a tenth of the garbage and a fifth less memory. A burst of health, power or aura changes is drawn once rather than once per event, and each power change is handled once (the game sends two events for it); frames only listen to the events their settings use, and health, power and flag changes redraw only what they change; health text uses the health just read for its bar rather than asking the game again; nothing runs every frame while there's nothing to animate (the hit text over the portrait, the range and target-of-target checks), and party frames hear about range changes from the game rather than checking; icons, glows, empty text, the mana rule and the bars' frames are only touched when they change. Frame borders, party pets, the 3D portrait, hit text, your cast bar, the five-second rule, druid mana, glows and the unlock tint are only made when a frame uses them. It looks and works the same.

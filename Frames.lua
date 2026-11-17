@@ -98,9 +98,15 @@ local function Tick()
                         frame.lastFull = GetTime()
                         frame:UpdatePortrait()
                     end
+                elseif guid ~= frame.guid then
+                    frame:Update(true, false)
+                elseif GetTime() - (frame.lastSame or 0) >= 1 then
+                    -- The same unit: everything (icons, glow, fade) once a second, its health and power each tick.
+                    frame.lastSame = GetTime()
+                    frame:Update(false, true)
                 else
-                    local full = guid ~= frame.guid
-                    frame:Update(full, not full)
+                    frame:UpdateHealth(false, false)
+                    frame:UpdatePower(false, false)
                 end
             else
                 frame:UpdateRange()

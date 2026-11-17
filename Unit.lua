@@ -532,6 +532,8 @@ function Unit:RegisterEvents()
             if settings.portrait ~= "none" then
                 OnUnit("UNIT_PORTRAIT_UPDATE")
                 OnUnit("UNIT_MODEL_CHANGED")
+                -- A picture painted during a loading screen gets none, and only this repaints it (as Blizzard's own).
+                OnWorld("PORTRAITS_UPDATED")
             end
             if settings.hitText then OnUnit("UNIT_COMBAT") end
             if settings.threat then OnUnit("UNIT_THREAT_SITUATION_UPDATE") end
@@ -704,7 +706,7 @@ local HANDLERS = {
     PLAYER_ENTERING_WORLD = Mark("full"), UNIT_PET = Mark("full"),
     UNIT_HAPPINESS = RedrawIcons, RAID_TARGET_UPDATE = RedrawIcons, PARTY_LEADER_CHANGED = RedrawIcons,
     PLAYER_FLAGS_CHANGED = RedrawIcons, PLAYER_ROLES_ASSIGNED = RedrawIcons,
-    UNIT_PORTRAIT_UPDATE = RedrawPortrait, UNIT_MODEL_CHANGED = RedrawPortrait,
+    UNIT_PORTRAIT_UPDATE = RedrawPortrait, UNIT_MODEL_CHANGED = RedrawPortrait, PORTRAITS_UPDATED = RedrawPortrait,
     UNIT_COMBAT = function(self, _, _, ...)
         if self.portraitShown then self.portrait:CombatEvent(...) end
     end,
@@ -733,7 +735,10 @@ local HANDLERS = {
     UNIT_IN_RANGE_UPDATE = function(self) self:UpdateRange() end, -- (its payload is secret)
     UNIT_TARGET = Mark("full"), -- (a target switching targets sends these in bursts)
 }
-for _, event in ipairs(CastKit.EVENTS) do HANDLERS[event] = function(self) self:UpdateCast(event) end end
+-- (A channel's stop says who interrupted it, fourth after the unit.)
+for _, event in ipairs(CastKit.EVENTS) do
+    HANDLERS[event] = function(self, _, _, _, _, interruptedBy) self:UpdateCast(event, interruptedBy) end
+end
 
 function Unit:OnEvent(event, ...)
     if not self.rootShown then
@@ -1160,7 +1165,7 @@ function Unit:LayoutVanilla()
 
     -- The name: centred in its box (or above the frame with the large health bar), or by the bars.
     local nameText = self.nameText
-    ns.SetFont(nameText, db.font, settings.nameSize, db.outline)
+    ns.SetNameFont(nameText, db.font, settings.nameSize, db.outline)
     nameText:ClearAllPoints()
     nameText:SetWordWrap(false)
     NameColour(nameText, 1, 0.82, 0)
@@ -1336,7 +1341,7 @@ function Unit:Layout()
     if self.side == "right" then near, far = "RIGHT", "LEFT" end
     local sign = near == "LEFT" and 1 or -1
     local nameText, levelText = self.nameText, self.levelText
-    ns.SetFont(nameText, db.font, settings.nameSize, db.outline)
+    ns.SetNameFont(nameText, db.font, settings.nameSize, db.outline)
     ns.SetFont(levelText, db.font, settings.nameSize, db.outline)
     nameText:ClearAllPoints()
     levelText:ClearAllPoints()
@@ -2129,7 +2134,7 @@ end
 -- The cast bar (target, focus)
 ------------------------------------------------------------------------------
 
-function Unit:UpdateCast(event)
+function Unit:UpdateCast(event, interruptedBy)
     local cast = self.cast
     if not cast then return end
     local unit = self.shownUnit
@@ -2138,7 +2143,7 @@ function Unit:UpdateCast(event)
         return
     end
     -- unit nil: a sample (unlocked, nobody there).
-    cast.driver:Update(unit, event, not ns.db.locked)
+    cast.driver:Update(unit, event, not ns.db.locked, interruptedBy)
 end
 
 ------------------------------------------------------------------------------
